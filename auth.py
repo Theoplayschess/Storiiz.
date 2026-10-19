@@ -1,11 +1,15 @@
-"""User accounts for Storiiz: validation, password hashing (PBKDF2-SHA256) and sign up / log in.
+"""Accounts for Storiiz: username and password only, PBKDF2-SHA256 hashing, and a seeded admin.
 
-Passwords are never stored in plain text. Each hash has its own random salt and the
-format is pbkdf2_sha256$iterations$salt_hex$hash_hex.
+Passwords are never stored in plain text. Each hash has its own random salt and the format is
+pbkdf2_sha256$iterations$salt_hex$hash_hex.
+
+The admin account is created automatically the first time the app starts if it does not exist.
+The admin password can be overridden with the STORIIZ_ADMIN_PASSWORD environment variable or secret.
 """
 
 import hashlib
 import hmac
+import os
 import secrets
 
 ITERATIONS = 310_000
@@ -13,6 +17,10 @@ MIN_PASSWORD = 8
 MAX_PASSWORD = 128
 MIN_USERNAME = 3
 MAX_USERNAME = 30
+
+ADMIN_USERNAME = 'storiizadmin'
+DEFAULT_ADMIN_PASSWORD = 'StorizzAdmin2026!?'
+ADMIN_PASSWORD_ENV = 'STORIIZ_ADMIN_PASSWORD'
 
 
 def hash_password(password):
@@ -45,21 +53,13 @@ def _username_ok(username):
     )
 
 
-def _email_ok(email):
-    if not email:
-        return True
-    domain = email.split('@')[-1]
-    return email.count('@') == 1 and ' ' not in email and '.' in domain and not domain.startswith('.')
-
-
-def validate_signup(username, email, password, confirm):
+def validate_signup(username, password, confirm):
     errors = []
     name = normalize_username(username)
     if not _username_ok(name):
         errors.append('Username must be 3 to 30 characters: letters, numbers or underscores.')
-    email = (email or '').strip()
-    if not _email_ok(email):
-        errors.append('Enter a valid email or leave it empty.')
+    elif name == ADMIN_USERNAME:
+        errors.append('That username is reserved.')
     if len(password or '') < MIN_PASSWORD:
         errors.append(f'Password must be at least {MIN_PASSWORD} characters.')
     elif len(password) > MAX_PASSWORD:
@@ -69,23 +69,50 @@ def validate_signup(username, email, password, confirm):
     return errors
 
 
-def sign_up(backend, username, email, password):
-    """Create an account and return the normalized username. Raises ValueError if it is taken."""
+def sign_up(backend, username, password):
+    """Create a regular account and return the normalized username. Raises ValueError if taken."""
     name = normalize_username(username)
     if backend.get_user(name) is not None:
         raise ValueError('That username is already taken.')
     backend.create_user({
         'username': name,
-        'email': (email or '').strip(),
         'password_hash': hash_password(password),
+        'is_admin': False,
     })
     return name
 
 
 def log_in(backend, username, password):
-    """Return the normalized username on success, or None if the credentials are wrong."""
+    """Return the user dict on success, or None if the credentials are wrong."""
     name = normalize_username(username)
     user = backend.get_user(name) if name else None
     if user is None or not verify_password(password or '', user['password_hash']):
         return None
-    return user['username']
+    return {'username': user['username'], 'is_admin': bool(user.get('is_admin'))}
+
+
+def admin_password():
+    try:
+        import streamlit as st
+        if ADMIN_PASSWORD_ENV in st.secrets:
+            return str(st.secrets[ADMIN_PASSWORD_ENV])
+    except Exception:
+        pass
+    return os.environ.get(ADMIN_PASSWORD_ENV) or DEFAULT_ADMIN_PASSWORD
+
+
+def ensure_admin(backend):
+    """Create the admin account if missing, and make sure it has the admin flag."""
+    user = backend.get_user(ADMIN_USERNAME)
+    if user is None:
+        backend.create_user({
+            'username': ADMIN_USERNAME,
+            'password_hash': hash_password(admin_password()),
+            'is_admin': True,
+        })
+    elif not user.get('is_admin'):
+        backend.set_admin(ADMIN_USERNAME, True)
+
+
+def is_admin(user):
+    return bool(user and user.get('is_admin'))
