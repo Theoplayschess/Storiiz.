@@ -1,9 +1,9 @@
-"""Storage, validation, ranking, moderation settings and backups for Storiiz.
+"""Storage, validation, ranking, moderation settings, custom roles and backups for Storiiz.
 
 Uses Supabase when SUPABASE_URL and SUPABASE_KEY are set (st.secrets or environment variables).
 Otherwise uses a local SQLite database that is created automatically in data/storiiz.db.
 The admin account is ensured on every backend start. Older SQLite files get new columns automatically.
-Role levels and permission checks live in auth.py.
+Role levels and permission checks live in auth.py. Who may change custom roles lives in custom_roles.py.
 """
 
 import base64
@@ -33,6 +33,23 @@ MAX_LINK = 300
 ANNOUNCEMENT_KINDS = ['Info', 'Warning', 'Success']
 DEFAULT_MAINTENANCE_MESSAGE = "Storiiz is under maintenance. We'll be back shortly."
 URL_PATTERN = re.compile(r'https?://[^\s<>"\']+')
+
+# Custom roles
+MAX_ROLES_PER_USER = 250
+MAX_ROLE_NAME = 30
+MAX_ROLE_DESCRIPTION = 200
+MAX_ROLE_ICON_BYTES = 256 * 1024
+MAX_ROLE_ICON_TEXT = 500
+MAX_ROLE_EMOJI = 16
+ROLE_PRIORITY_LIMIT = 1000
+ROLE_ICON_MIME = {
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'webp': 'image/webp',
+    'svg': 'image/svg+xml',
+    'ico': 'image/x-icon',
+}
 
 LIKE_WEIGHT = 3          # each like counts as 3 points of engagement
 NEW_BOOST_MAX = 20.0     # newly added channels get up to 20 extra points...
@@ -83,6 +100,29 @@ CREATE_SETTINGS_TABLE = '''
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+)
+'''
+
+CREATE_ROLES_TABLE = '''
+CREATE TABLE IF NOT EXISTS custom_roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL,
+    icon TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    priority INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT,
+    created_by TEXT
+)
+'''
+
+CREATE_USER_ROLES_TABLE = '''
+CREATE TABLE IF NOT EXISTS user_roles (
+    username TEXT NOT NULL,
+    role_id TEXT NOT NULL,
+    assigned_at TEXT,
+    assigned_by TEXT,
+    PRIMARY KEY (username, role_id)
 )
 '''
 
@@ -148,6 +188,10 @@ class SQLiteBackend:
             conn.execute(CREATE_USERS_TABLE)
             conn.execute(CREATE_LIKES_TABLE)
             conn.execute(CREATE_SETTINGS_TABLE)
+            conn.execute(CREATE_ROLES_TABLE)
+            conn.execute(CREATE_USER_ROLES_TABLE)
+            conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS custom_roles_name_lower ON custom_roles (lower(name))')
+            conn.execute('CREATE INDEX IF NOT EXISTS user_roles_role_id ON user_roles (role_id)')
             _add_missing_columns(conn, 'channels', {
                 'owner': 'TEXT',
                 'is_verified': 'INTEGER NOT NULL DEFAULT 0',
@@ -270,6 +314,49 @@ class SQLiteBackend:
                 conn.execute('UPDATE channels SET likes = MAX(0, likes - 1) WHERE id = ?', (channel_id,))
             conn.commit()
 
+    # ---- custom roles ----
+
+    def list_roles(self):
+        with closing(self._connect()) as conn:
+            return [dict(row) for row in conn.execute('SELECT * FROM custom_roles').fetchall()]
+
+    def insert_role(self, row):
+        cols = ', '.join(row.keys())
+        marks = ', '.join('?' for _ in row)
+        with closing(self._connect()) as conn:
+            conn.execute(f'INSERT INTO custom_roles ({cols}) VALUES ({marks})', list(row.values()))
+            conn.commit()
+
+    def update_role(self, role_id, fields):
+        if not fields:
+            return
+        sets = ', '.join(f'{k} = ?' for k in fields)
+        with closing(self._connect()) as conn:
+            conn.execute(f'UPDATE custom_roles SET {sets} WHERE id = ?', [*fields.values(), role_id])
+            conn.commit()
+
+    def delete_role(self, role_id):
+        with closing(self._connect()) as conn:
+            conn.execute('DELETE FROM user_roles WHERE role_id = ?', (role_id,))
+            conn.execute('DELETE FROM custom_roles WHERE id = ?', (role_id,))
+            conn.commit()
+
+    def all_user_roles(self):
+        """Every assignment as (username, role_id) pairs."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute('SELECT username, role_id FROM user_roles').fetchall()
+        return [(row['username'], row['role_id']) for row in rows]
+
+    def replace_user_roles(self, username, role_ids, assigned_by):
+        with closing(self._connect()) as conn:
+            conn.execute('DELETE FROM user_roles WHERE username = ?', (username,))
+            for role_id in role_ids:
+                conn.execute(
+                    'INSERT INTO user_roles (username, role_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)',
+                    (username, role_id, now_iso(), assigned_by),
+                )
+            conn.commit()
+
 
 class SupabaseBackend:
     name = 'Supabase'
@@ -351,6 +438,36 @@ class SupabaseBackend:
         elif not liked and existing:
             self._table('channel_likes').delete().eq('username', username).eq('channel_id', channel_id).execute()
             self._table().update({'likes': max(0, current - 1)}).eq('id', channel_id).execute()
+
+    # ---- custom roles ----
+
+    def list_roles(self):
+        return self._table('custom_roles').select('*').execute().data or []
+
+    def insert_role(self, row):
+        self._table('custom_roles').insert(row).execute()
+
+    def update_role(self, role_id, fields):
+        if fields:
+            self._table('custom_roles').update(fields).eq('id', role_id).execute()
+
+    def delete_role(self, role_id):
+        self._table('user_roles').delete().eq('role_id', role_id).execute()
+        self._table('custom_roles').delete().eq('id', role_id).execute()
+
+    def all_user_roles(self):
+        rows = self._table('user_roles').select('username,role_id').execute().data or []
+        return [(row['username'], row['role_id']) for row in rows]
+
+    def replace_user_roles(self, username, role_ids, assigned_by):
+        # The database trigger enforces the 250 cap as well. The app checks it first.
+        self._table('user_roles').delete().eq('username', username).execute()
+        if role_ids:
+            now = now_iso()
+            self._table('user_roles').insert([
+                {'username': username, 'role_id': rid, 'assigned_at': now, 'assigned_by': assigned_by}
+                for rid in role_ids
+            ]).execute()
 
 
 def parse_tags(value):
@@ -493,6 +610,171 @@ def create_channel(backend, data):
     return row['id']
 
 
+# ---- Custom roles ----
+
+def clean_color(raw):
+    """Accept #RRGGBB or #RGB. Returns uppercase #RRGGBB."""
+    value = (raw or '').strip()
+    if re.fullmatch(r'#[0-9a-fA-F]{3}', value):
+        value = '#' + ''.join(ch * 2 for ch in value[1:])
+    if not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+        raise ValueError('Color must be a hex code like #7C3AED.')
+    return value.upper()
+
+
+def encode_role_icon(upload):
+    """Turn an uploaded PNG, JPG, WebP, SVG or ICO into a data URL."""
+    if upload.size > MAX_ROLE_ICON_BYTES:
+        raise ValueError('Role icon must be 256 KB or smaller.')
+    ext = (upload.name or '').lower().rsplit('.', 1)[-1]
+    mime = ROLE_ICON_MIME.get(ext)
+    if mime is None:
+        raise ValueError('Role icon must be a PNG, JPG, WebP, SVG or ICO file.')
+    data = upload.getvalue()
+    if mime == 'image/svg+xml' and b'<svg' not in data.lower():
+        raise ValueError('That SVG file does not contain an svg element.')
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def clean_role_icon(raw):
+    """An emoji, an https image link, or a data URL from encode_role_icon. Returns '' when empty."""
+    value = (raw or '').strip()
+    if not value:
+        return ''
+    if value.startswith(('http://', 'https://')):
+        if len(value) > MAX_ROLE_ICON_TEXT or ' ' in value:
+            raise ValueError('Icon link must be a single web address under 500 characters.')
+        return value
+    if value.startswith('data:image/'):
+        _, _, payload = value.partition(',')
+        if len(payload) * 3 // 4 > MAX_ROLE_ICON_BYTES:
+            raise ValueError('Role icon must be 256 KB or smaller.')
+        return value
+    if len(value) > MAX_ROLE_EMOJI:
+        raise ValueError('Icon must be an emoji, an image link, or an uploaded image.')
+    return value
+
+
+def clean_role_fields(data):
+    name = (data.get('name') or '').strip()
+    if not name:
+        raise ValueError('Give the role a name.')
+    if len(name) > MAX_ROLE_NAME:
+        raise ValueError(f'Role name must be {MAX_ROLE_NAME} characters or fewer.')
+    description = (data.get('description') or '').strip()
+    if len(description) > MAX_ROLE_DESCRIPTION:
+        raise ValueError(f'Description must be {MAX_ROLE_DESCRIPTION} characters or fewer.')
+    try:
+        priority = int(data.get('priority') or 0)
+    except (TypeError, ValueError):
+        raise ValueError('Priority must be a whole number.')
+    priority = max(-ROLE_PRIORITY_LIMIT, min(ROLE_PRIORITY_LIMIT, priority))
+    return {
+        'name': name,
+        'color': clean_color(data.get('color')),
+        'icon': clean_role_icon(data.get('icon')),
+        'description': description,
+        'priority': priority,
+    }
+
+
+def role_out(row):
+    return {
+        'id': row['id'],
+        'name': row.get('name') or '',
+        'color': row.get('color') or '#25D366',
+        'icon': row.get('icon') or '',
+        'description': row.get('description') or '',
+        'priority': int(row.get('priority') or 0),
+        'created_at': row.get('created_at'),
+        'created_by': row.get('created_by'),
+    }
+
+
+def list_roles(backend):
+    """All custom roles, highest priority first, then by name."""
+    roles = [role_out(r) for r in backend.list_roles()]
+    return sorted(roles, key=lambda r: (-r['priority'], r['name'].lower()))
+
+
+def get_role(backend, role_id):
+    for role in list_roles(backend):
+        if role['id'] == role_id:
+            return role
+    return None
+
+
+def _check_name_free(backend, name, except_id=None):
+    wanted = name.lower()
+    for role in backend.list_roles():
+        if role['id'] != except_id and (role.get('name') or '').lower() == wanted:
+            raise ValueError(f'A role named "{role["name"]}" already exists.')
+
+
+def create_role(backend, created_by, data):
+    fields = clean_role_fields(data)
+    _check_name_free(backend, fields['name'])
+    role_id = f'role_{uuid.uuid4().hex[:10]}'
+    backend.insert_role({
+        'id': role_id,
+        **fields,
+        'created_at': now_iso(),
+        'created_by': created_by,
+    })
+    return role_id
+
+
+def update_role(backend, role_id, data):
+    if not any(r['id'] == role_id for r in backend.list_roles()):
+        raise ValueError('That role no longer exists.')
+    fields = clean_role_fields(data)
+    _check_name_free(backend, fields['name'], except_id=role_id)
+    backend.update_role(role_id, fields)
+
+
+def delete_role(backend, role_id):
+    if not any(r['id'] == role_id for r in backend.list_roles()):
+        raise ValueError('That role no longer exists.')
+    backend.delete_role(role_id)
+
+
+def role_map(backend):
+    """{username: [role dicts]} for every user with at least one role. Unknown role ids are skipped."""
+    by_id = {r['id']: r for r in list_roles(backend)}
+    result = {}
+    for username, role_id in backend.all_user_roles():
+        role = by_id.get(role_id)
+        if role is not None:
+            result.setdefault(username, []).append(role)
+    for roles in result.values():
+        roles.sort(key=lambda r: (-r['priority'], r['name'].lower()))
+    return result
+
+
+def roles_for_user(backend, username):
+    return role_map(backend).get(username, [])
+
+
+def role_members(backend, role_id):
+    """Sorted usernames holding the role."""
+    return sorted({u for u, rid in backend.all_user_roles() if rid == role_id})
+
+
+def set_user_roles(backend, username, role_ids, assigned_by):
+    """Replace a user's custom roles. A user can hold at most MAX_ROLES_PER_USER roles."""
+    ids = []
+    for rid in role_ids or []:
+        if rid not in ids:
+            ids.append(rid)
+    if len(ids) > MAX_ROLES_PER_USER:
+        raise ValueError(f'A user can hold at most {MAX_ROLES_PER_USER} custom roles.')
+    known = {r['id'] for r in backend.list_roles()}
+    unknown = [rid for rid in ids if rid not in known]
+    if unknown:
+        raise ValueError('One of the selected roles no longer exists.')
+    backend.replace_user_roles(username, ids, assigned_by)
+
+
 # ---- Maintenance mode ----
 
 def get_maintenance(backend):
@@ -627,10 +909,15 @@ def delete_announcement(backend, announcement_id):
 
 def export_snapshot(backend):
     """Everything an admin needs for a backup. Password hashes are never included."""
+    assignments = {}
+    for username, role_id in backend.all_user_roles():
+        assignments.setdefault(username, []).append(role_id)
     return {
         'exported_at': now_iso(),
         'channels': backend.list_channels(),
         'users': backend.list_users(),
+        'custom_roles': list_roles(backend),
+        'user_roles': assignments,
         'maintenance': get_maintenance(backend),
         'announcements': list_announcements(backend),
     }
