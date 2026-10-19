@@ -4,6 +4,24 @@ import storage
 
 st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
 
+PAGE_STEP = 8
+
+CSS = '''
+<style>
+.block-container { max-width: 760px; padding-top: 1.5rem; padding-bottom: 4rem; }
+h1 { font-size: 2.6rem !important; }
+.feed-card { border-radius: 20px !important; padding: 1.2rem !important;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.12); margin-bottom: 1.8rem; min-height: 80vh; }
+.feed-card img { border-radius: 16px; }
+.feed-handle { font-size: 1.5rem; font-weight: 700; }
+.feed-caption { font-size: 1.35rem; line-height: 1.5; margin: 0.8rem 0; }
+.feed-tags { font-size: 1.05rem; color: #128C7E; font-weight: 600; }
+.stButton button, .stLinkButton a { font-size: 1.15rem !important; padding: 0.7rem 1rem !important;
+  border-radius: 14px !important; min-height: 3.2rem; }
+.stLinkButton a { width: 100%; text-align: center; }
+</style>
+'''
+
 
 @st.cache_resource
 def get_backend():
@@ -12,7 +30,7 @@ def get_backend():
 
 def init_state():
     st.session_state.setdefault('liked_ids', set())
-    st.session_state.setdefault('seen_ids', [])
+    st.session_state.setdefault('visible', PAGE_STEP)
 
 
 def toggle_like(backend, channel_id):
@@ -22,21 +40,6 @@ def toggle_like(backend, channel_id):
     else:
         st.session_state.liked_ids.add(channel_id)
         backend.add_like(channel_id, 1)
-
-
-def next_card(queue):
-    seen = st.session_state.seen_ids
-    for channel in queue:
-        if channel['id'] not in seen:
-            return channel
-    # Every card has been seen: start a new round.
-    st.session_state.seen_ids = []
-    return queue[0] if queue else None
-
-
-def mark_seen(channel_id):
-    if channel_id not in st.session_state.seen_ids:
-        st.session_state.seen_ids.append(channel_id)
 
 
 def show_image(value, width=None):
@@ -51,23 +54,26 @@ def show_image(value, width=None):
 
 def render_card(backend, channel):
     with st.container(border=True):
-        header = st.columns([1, 6])
+        header = st.columns([1, 5])
         with header[0]:
-            show_image(channel.get('avatar') or channel.get('image'), width=56)
+            show_image(channel.get('avatar') or channel.get('image'), width=72)
         with header[1]:
-            st.markdown(f"**{channel['handle']}**")
+            st.markdown(f"<div class='feed-handle'>{channel['handle']}</div>", unsafe_allow_html=True)
             st.caption(f"{channel.get('name') or ''} · {channel.get('category') or ''}")
         show_image(channel.get('image'))
         if channel.get('caption'):
-            st.write(channel['caption'])
+            st.markdown(f"<div class='feed-caption'>{channel['caption']}</div>", unsafe_allow_html=True)
         tags = storage.parse_tags(channel.get('tags'))
         if tags:
-            st.caption(' '.join(f'#{t}' for t in tags))
+            st.markdown(
+                f"<div class='feed-tags'>{' '.join('#' + t for t in tags)}</div>",
+                unsafe_allow_html=True,
+            )
 
         likes = channel.get('likes') or 0
         liked = channel['id'] in st.session_state.liked_ids
         heart = '❤️' if liked else '🤍'
-        cols = st.columns(3)
+        cols = st.columns([1, 2])
         with cols[0]:
             st.button(
                 f'{heart} {likes}',
@@ -78,10 +84,6 @@ def render_card(backend, channel):
             )
         with cols[1]:
             st.link_button('Join WhatsApp Channel', channel['link'], type='primary', use_container_width=True)
-        with cols[2]:
-            if st.button('Next →', key=f"next_{channel['id']}", use_container_width=True):
-                mark_seen(channel['id'])
-                st.rerun()
 
 
 def feed_view(backend):
@@ -90,19 +92,16 @@ def feed_view(backend):
         st.info('No channels yet. Be the first to submit one in the Submit tab.')
         return
     queue = storage.ranked(channels)
-    card = next_card(queue)
-    if card is None:
-        return
-    render_card(backend, card)
+    visible = st.session_state.visible
+    for channel in queue[:visible]:
+        render_card(backend, channel)
 
-    remaining = sum(1 for c in channels if c['id'] not in st.session_state.seen_ids)
-    st.caption(f'{remaining} card(s) left in this round, ranked by engagement and freshness.')
-
-    liked = [c for c in channels if c['id'] in st.session_state.liked_ids]
-    if liked:
-        with st.expander('Channels you liked'):
-            for c in liked:
-                st.markdown(f"- {c['handle']} ([Join]({c['link']}))")
+    if visible < len(queue):
+        if st.button(f'Load more ({len(queue) - visible} left)', use_container_width=True):
+            st.session_state.visible = visible + PAGE_STEP
+            st.rerun()
+    else:
+        st.caption('You have reached the end of the feed.')
 
 
 def submit_view(backend):
@@ -159,13 +158,14 @@ def submit_view(backend):
 
 def main():
     init_state()
+    st.markdown(CSS, unsafe_allow_html=True)
     backend = get_backend()
     st.sidebar.caption(f'Storage: {backend.name}')
     if backend.note:
         st.sidebar.warning(backend.note)
 
     st.title('Storiiz')
-    st.caption('Discover WhatsApp Channels, one card at a time.')
+    st.caption('Discover WhatsApp Channels. Scroll to explore.')
     feed_tab, submit_tab = st.tabs(['Feed', 'Submit a channel'])
     with feed_tab:
         feed_view(backend)
