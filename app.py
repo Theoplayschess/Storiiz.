@@ -5,8 +5,10 @@ import streamlit as st
 
 import auth
 import custom_roles
+import i18n
 import role_ui
 import storage
+from i18n import t
 
 st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
 
@@ -16,26 +18,26 @@ DARK_BG = '#0B0F0C'
 CARD_BG = '#141A16'
 VERIFIED_BLUE = '#1D9BF0'
 
-# Pill label -> category filter. Trending shows everything ranked.
+# Pill id -> (translation key, category filter). Trending shows everything ranked.
 PILLS = {
-    '🔥 Trending': None,
-    '💪 Fitness': 'Fitness',
-    '📰 News': 'News',
-    '🎮 Gaming': 'Entertainment',
-    '🍳 Cooking': 'Food',
-    '🐶 Pets': 'Animals',
-    '💻 Tech': 'Tech',
+    'pill.trending': (None),
+    'pill.fitness': ('Fitness'),
+    'pill.news': ('News'),
+    'pill.gaming': ('Entertainment'),
+    'pill.cooking': ('Food'),
+    'pill.pets': ('Animals'),
+    'pill.tech': ('Tech'),
 }
 
-# Level -> (CSS class, short label) for the role badge.
+# Level -> (CSS class, translation key) for the role badge.
 LEVEL_BADGES = {
-    auth.LEVEL_MAIN_ADMIN: ('lvl-main', 'Main Admin'),
-    auth.LEVEL_SUPER_ADMIN: ('lvl-super', 'Super Admin'),
-    auth.LEVEL_ADMIN: ('lvl-admin', 'Admin'),
-    auth.LEVEL_VERIFIED: ('lvl-verified', 'Verified'),
-    auth.LEVEL_OWNER: ('lvl-owner', 'Channel Owner'),
-    auth.LEVEL_USER: ('lvl-user', 'Logged In'),
-    auth.LEVEL_GUEST: ('lvl-guest', 'Unregistered'),
+    auth.LEVEL_MAIN_ADMIN: ('lvl-main', 'lvl.main'),
+    auth.LEVEL_SUPER_ADMIN: ('lvl-super', 'lvl.super'),
+    auth.LEVEL_ADMIN: ('lvl-admin', 'lvl.admin'),
+    auth.LEVEL_VERIFIED: ('lvl-verified', 'lvl.verified'),
+    auth.LEVEL_OWNER: ('lvl-owner', 'lvl.owner'),
+    auth.LEVEL_USER: ('lvl-user', 'lvl.user'),
+    auth.LEVEL_GUEST: ('lvl-guest', 'lvl.guest'),
 }
 
 CSS = f'''
@@ -106,8 +108,8 @@ def get_backend():
 # ---------- levels ----------
 
 def level_badge(level):
-    css, label = LEVEL_BADGES.get(level, LEVEL_BADGES[auth.LEVEL_GUEST])
-    return f"<span class='lvl {css}'>{html.escape(label)}</span>"
+    css, key = LEVEL_BADGES.get(level, LEVEL_BADGES[auth.LEVEL_GUEST])
+    return f"<span class='lvl {css}'>{html.escape(t(key))}</span>"
 
 
 def member_level(member, owners):
@@ -167,7 +169,7 @@ def refresh_user(backend):
     if fresh is None or fresh.get('is_banned'):
         st.session_state.user = None
         st.session_state.liked_ids = set()
-        notify('error', 'Your account is no longer active. You have been logged out.')
+        notify('error', t('auth.inactive'))
         return
     st.session_state.user = session_user(backend, fresh)
 
@@ -180,7 +182,7 @@ def load_likes(backend):
 def log_out():
     st.session_state.user = None
     st.session_state.liked_ids = set()
-    notify('info', 'You have logged out.')
+    notify('info', t('auth.logged_out'))
 
 
 # ---------- accounts ----------
@@ -198,21 +200,20 @@ def do_login(backend, username, password):
 
 def login_form(backend):
     with st.form('login_form'):
-        username = st.text_input('Username', key='login_username')
-        password = st.text_input('Password', type='password', key='login_password')
-        submitted = st.form_submit_button('Log in')
+        username = st.text_input(t('auth.username'), key='login_username')
+        password = st.text_input(t('auth.password'), type='password', key='login_password')
+        submitted = st.form_submit_button(t('auth.login_button'))
     if submitted and do_login(backend, username, password):
         st.rerun()
 
 
 def signup_form(backend):
     with st.form('signup_form'):
-        username = st.text_input('Username', help='3 to 30 characters: letters, numbers or underscores.',
-                                 key='signup_username')
-        password = st.text_input('Password', type='password', help='At least 8 characters.',
+        username = st.text_input(t('auth.username'), help=t('auth.username_help'), key='signup_username')
+        password = st.text_input(t('auth.password'), type='password', help=t('auth.password_help'),
                                  key='signup_password')
-        confirm = st.text_input('Confirm password', type='password', key='signup_confirm')
-        submitted = st.form_submit_button('Create account')
+        confirm = st.text_input(t('auth.confirm'), type='password', key='signup_confirm')
+        submitted = st.form_submit_button(t('auth.signup_button'))
     if not submitted:
         return
     errors = auth.validate_signup(username, password, confirm)
@@ -226,15 +227,15 @@ def signup_form(backend):
         st.error(str(exc))
         return
     if do_login(backend, username, password):
-        notify('success', 'Account created. Welcome to Storiiz!')
+        notify('success', t('auth.created'))
         st.rerun()
 
 
 def account_bar(backend):
     user = current_user()
     if user is None:
-        with st.expander('Log in or create an account'):
-            login_tab, signup_tab = st.tabs(['Log in', 'Create account'])
+        with st.expander(t('auth.title')):
+            login_tab, signup_tab = st.tabs([t('auth.tab_login'), t('auth.tab_signup')])
             with login_tab:
                 login_form(backend)
             with signup_tab:
@@ -243,12 +244,12 @@ def account_bar(backend):
     cols = st.columns([3, 1])
     with cols[0]:
         st.markdown(
-            f"<div class='userline'>Logged in as @{html.escape(user['username'])}"
+            f"<div class='userline'>{html.escape(t('auth.logged_in_as', name=user['username']))}"
             f"{level_badge(current_level())}</div>",
             unsafe_allow_html=True,
         )
     with cols[1]:
-        st.button('Log out', on_click=log_out, use_container_width=True)
+        st.button(t('auth.logout'), on_click=log_out, use_container_width=True)
 
 
 # ---------- feed ----------
@@ -269,15 +270,15 @@ def remove_channel(backend, channel_id):
     if not is_admin_user():
         return
     backend.delete_channel(channel_id)
-    notify('success', 'Channel removed from the feed.')
+    notify('success', t('n.channel_removed'))
 
 
 def set_channel_flag(backend, channel_id, field, value):
     if not is_admin_user():
         return
     backend.update_channel(channel_id, {field: bool(value)})
-    label = {'is_verified': 'verification', 'is_pinned': 'pin'}.get(field, field)
-    notify('success', f"Channel {label} updated.")
+    label = t('n.label_verification') if field == 'is_verified' else t('n.label_pin')
+    notify('success', t('n.channel_flag', label=label))
 
 
 def image_src(value):
@@ -291,13 +292,13 @@ def render_card(backend, channel, role_lookup=None):
     handle = html.escape(channel['handle'])
     title = html.escape(channel.get('name') or channel['handle'])
     desc = html.escape(channel.get('caption') or '')
-    category = html.escape(channel.get('category') or '')
+    category = html.escape(i18n.label_or(f"cat.{channel.get('category')}", channel.get('category') or ''))
     owner = channel.get('owner')
     owner_roles = (role_lookup or {}).get(owner, []) if owner else []
     role_html = role_ui.badges_html(owner_roles)
-    owner_html = f"<div class='owner'>Submitted by @{html.escape(owner)}</div>" if owner else ''
-    verified = "<span class='verified'>✓ Verified</span>" if channel.get('is_verified') else ''
-    pinned = "<span class='pinned'>📌 Pinned</span>" if channel.get('is_pinned') else ''
+    owner_html = (f"<div class='owner'>{html.escape(t('card.submitted_by', name=owner))}</div>" if owner else '')
+    verified = f"<span class='verified'>{html.escape(t('card.verified'))}</span>" if channel.get('is_verified') else ''
+    pinned = f"<span class='pinned'>{html.escape(t('card.pinned'))}</span>" if channel.get('is_pinned') else ''
     avatar_src = html.escape(image_src(channel.get('avatar') or channel.get('image')))
     media_src = html.escape(image_src(channel.get('image')))
     likes = channel.get('likes') or 0
@@ -327,20 +328,20 @@ def render_card(backend, channel, role_lookup=None):
     with cols[0]:
         if user:
             st.button(
-                '❤️ Liked' if liked else '🤍 Like',
+                t('card.liked') if liked else t('card.like'),
                 key=f'like_{channel_id}',
                 on_click=toggle_like,
                 args=(backend, channel_id),
                 use_container_width=True,
             )
         else:
-            st.button('🤍 Log in to like', key=f'like_{channel_id}', disabled=True, use_container_width=True)
+            st.button(t('card.login_to_like'), key=f'like_{channel_id}', disabled=True, use_container_width=True)
     with cols[1]:
-        st.link_button('Join WhatsApp Channel  →', channel['link'], use_container_width=True)
+        st.link_button(t('card.join'), channel['link'], use_container_width=True)
     if can_moderate:
         with cols[2]:
             st.button(
-                '🗑 Remove',
+                t('card.remove'),
                 key=f'remove_{channel_id}',
                 on_click=remove_channel,
                 args=(backend, channel_id),
@@ -364,45 +365,46 @@ def matches(channel, query, category):
 def feed_view(backend, query, pill):
     channels = backend.list_channels()
     if not channels:
-        st.info('No channels yet. Be the first to submit one in the Submit tab.')
+        st.info(t('feed.empty'))
         return
     category = PILLS[pill]
     queue = [c for c in storage.ranked(channels) if matches(c, query, category)]
     if not queue:
-        st.info('No channels match your search or filter.')
+        st.info(t('feed.no_match'))
         return
     visible = st.session_state.visible
     role_lookup = storage.role_map(backend)
     for channel in queue[:visible]:
         render_card(backend, channel, role_lookup)
     if visible < len(queue):
-        if st.button(f'Load more ({len(queue) - visible} left)', use_container_width=True):
+        if st.button(t('feed.load_more', n=len(queue) - visible), use_container_width=True):
             st.session_state.visible = visible + PAGE_STEP
             st.rerun()
     else:
-        st.caption('You have reached the end of the feed.')
+        st.caption(t('feed.end'))
 
 
 def submit_view(backend):
     user = current_user()
     if not user:
-        st.info('Log in or create an account above to submit a channel.')
+        st.info(t('submit.login_prompt'))
         return
-    st.write('Share your WhatsApp Channel with the Storiiz community. New channels appear in the feed right away.')
+    st.write(t('submit.intro'))
     with st.form('submit_channel', clear_on_submit=True):
-        handle = st.text_input('Handle', placeholder='@yourchannel')
-        name = st.text_input('Channel name')
-        category = st.selectbox('Category', storage.CATEGORIES)
-        caption = st.text_area('Caption', max_chars=storage.MAX_CAPTION)
-        image_url = st.text_input('Image URL', placeholder='https://...')
+        handle = st.text_input(t('submit.handle'), placeholder='@yourchannel')
+        name = st.text_input(t('submit.name'))
+        category = st.selectbox(t('submit.category'), storage.CATEGORIES,
+                                format_func=lambda c: i18n.label_or(f'cat.{c}', c))
+        caption = st.text_area(t('submit.caption'), max_chars=storage.MAX_CAPTION)
+        image_url = st.text_input(t('submit.image_url'), placeholder='https://...')
         upload = st.file_uploader(
-            'Or upload an image (PNG, JPEG, WebP, max 2 MB)',
+            t('submit.upload'),
             type=['png', 'jpg', 'jpeg', 'webp'],
         )
-        avatar_url = st.text_input('Avatar URL (optional, defaults to the image)')
-        link = st.text_input('WhatsApp Channel link', placeholder='https://whatsapp.com/channel/...')
-        tags = st.text_input('Tags (comma separated)', placeholder='pets, funny')
-        submitted = st.form_submit_button('Submit channel')
+        avatar_url = st.text_input(t('submit.avatar'))
+        link = st.text_input(t('submit.link'), placeholder='https://whatsapp.com/channel/...')
+        tags = st.text_input(t('submit.tags'), placeholder='pets, funny')
+        submitted = st.form_submit_button(t('submit.button'))
 
     if not submitted:
         return
@@ -435,10 +437,10 @@ def submit_view(backend):
     try:
         channel_id = storage.create_channel(backend, data)
     except Exception as exc:
-        st.error(f'Could not save your channel: {exc}')
+        st.error(t('submit.error_save', error=exc))
         return
     st.session_state.user['owns_channel'] = True
-    st.success(f"Thanks! {data['handle']} is now live in the feed (id: {channel_id}).")
+    st.success(t('submit.success', handle=data['handle'], id=channel_id))
 
 
 # ---------- admin actions ----------
@@ -446,7 +448,7 @@ def submit_view(backend):
 def act_role(backend, username, make_admin):
     try:
         auth.set_admin_role(backend, current_user(), username, make_admin)
-        notify('success', f"@{username} is now {'an admin' if make_admin else 'a regular user'}.")
+        notify('success', t('n.now_admin' if make_admin else 'n.now_user', name=username))
     except (ValueError, PermissionError) as exc:
         notify('error', str(exc))
 
@@ -454,7 +456,7 @@ def act_role(backend, username, make_admin):
 def act_super(backend, username, make_super):
     try:
         auth.set_super_admin(backend, current_user(), username, make_super)
-        notify('success', f"@{username} is now {'a Super Admin' if make_super else 'a standard Admin'}.")
+        notify('success', t('n.now_super' if make_super else 'n.now_std_admin', name=username))
     except (ValueError, PermissionError) as exc:
         notify('error', str(exc))
 
@@ -462,7 +464,7 @@ def act_super(backend, username, make_super):
 def act_user_verify(backend, username, verified):
     try:
         auth.set_verified(backend, current_user(), username, verified)
-        notify('success', f"@{username} {'verified' if verified else 'unverified'}.")
+        notify('success', t('n.verified' if verified else 'n.unverified', name=username))
     except (ValueError, PermissionError) as exc:
         notify('error', str(exc))
 
@@ -470,7 +472,7 @@ def act_user_verify(backend, username, verified):
 def act_ban(backend, username, banned):
     try:
         auth.set_banned(backend, current_user(), username, banned)
-        notify('success', f"@{username} {'frozen (banned)' if banned else 'unfrozen'}.")
+        notify('success', t('n.frozen' if banned else 'n.unfrozen', name=username))
     except (ValueError, PermissionError) as exc:
         notify('error', str(exc))
 
@@ -480,31 +482,31 @@ def act_reset_password(backend, username):
     try:
         auth.reset_password(backend, current_user(), username, new_password)
         st.session_state[f'reset_{username}'] = ''
-        notify('success', f'Password reset for @{username}.')
+        notify('success', t('n.pw_reset', name=username))
     except (ValueError, PermissionError) as exc:
         notify('error', str(exc))
 
 
 def act_save_maintenance(backend):
     if not is_super_user():
-        notify('error', 'Only Super Admins and the Main Admin Account can change maintenance mode.')
+        notify('error', t('n.maint_super_only'))
         return
     storage.set_maintenance(
         backend,
         st.session_state.get('maint_enabled', False),
         st.session_state.get('maint_message', ''),
     )
-    state = 'ON' if st.session_state.get('maint_enabled') else 'OFF'
-    notify('success', f'Maintenance mode saved. It is now {state}.')
+    state = t('n.on') if st.session_state.get('maint_enabled') else t('n.off')
+    notify('success', t('n.maint_saved', state=state))
 
 
 def act_add_announcement(backend):
     if not is_super_user():
-        notify('error', 'Only Super Admins and the Main Admin Account can publish announcements.')
+        notify('error', t('n.ann_super_only'))
         return
     message = st.session_state.get('ann_message', '').strip()
     if not message:
-        notify('error', 'Write a message for the announcement.')
+        notify('error', t('n.ann_write'))
         return
     amount = int(st.session_state.get('ann_amount', 24))
     hours = amount * (24 if st.session_state.get('ann_unit') == 'Days' else 1)
@@ -521,7 +523,7 @@ def act_add_announcement(backend):
         return
     st.session_state['ann_message'] = ''
     st.session_state['ann_link'] = ''
-    notify('success', 'Announcement published.')
+    notify('success', t('n.ann_published'))
 
 
 def act_set_announcement(backend, announcement_id, active):
@@ -529,7 +531,7 @@ def act_set_announcement(backend, announcement_id, active):
         return
     try:
         storage.update_announcement(backend, announcement_id, active)
-        notify('success', 'Announcement updated.')
+        notify('success', t('n.ann_updated'))
     except ValueError as exc:
         notify('error', str(exc))
 
@@ -538,7 +540,7 @@ def act_delete_announcement(backend, announcement_id):
     if not is_super_user():
         return
     storage.delete_announcement(backend, announcement_id)
-    notify('success', 'Announcement deleted.')
+    notify('success', t('n.ann_deleted'))
 
 
 # ---------- admin panel ----------
@@ -550,53 +552,54 @@ def admin_view(backend):
     owners = {c.get('owner') for c in channels if c.get('owner')}
     super_user = is_super_user()
 
-    st.subheader('Your role')
+    st.subheader(t('admin.your_role'))
     st.markdown(f"<div class='userline'>@{html.escape(user['username'])}{level_badge(current_level())}</div>",
                 unsafe_allow_html=True)
-    st.caption(auth.level_name(current_level()) + ' permissions apply to this account.')
+    st.caption(t('admin.permissions', level=t(LEVEL_BADGES[current_level()][1])))
 
-    st.subheader('Stats')
+    st.subheader(t('admin.stats'))
     cols = st.columns(4)
-    cols[0].metric('Users', len(users))
-    cols[1].metric('Admins', sum(1 for u in users if u['is_admin']))
-    cols[2].metric('Verified users', sum(1 for u in users if u['is_verified']))
-    cols[3].metric('Banned users', sum(1 for u in users if u['is_banned']))
+    cols[0].metric(t('admin.users'), len(users))
+    cols[1].metric(t('admin.admins'), sum(1 for u in users if u['is_admin']))
+    cols[2].metric(t('admin.verified_users'), sum(1 for u in users if u['is_verified']))
+    cols[3].metric(t('admin.banned_users'), sum(1 for u in users if u['is_banned']))
     cols = st.columns(4)
-    cols[0].metric('Channels', len(channels))
-    cols[1].metric('Verified channels', sum(1 for c in channels if c.get('is_verified')))
-    cols[2].metric('Pinned channels', sum(1 for c in channels if c.get('is_pinned')))
-    cols[3].metric('Total likes', sum((c.get('likes') or 0) for c in channels))
+    cols[0].metric(t('admin.channels'), len(channels))
+    cols[1].metric(t('admin.verified_channels'), sum(1 for c in channels if c.get('is_verified')))
+    cols[2].metric(t('admin.pinned_channels'), sum(1 for c in channels if c.get('is_pinned')))
+    cols[3].metric(t('admin.total_likes'), sum((c.get('likes') or 0) for c in channels))
 
     if super_user:
-        st.subheader('Maintenance mode')
+        st.subheader(t('admin.maintenance'))
         maint = storage.get_maintenance(backend)
         with st.form('maintenance_form'):
-            st.toggle('Maintenance mode is on', value=maint['enabled'], key='maint_enabled')
-            st.text_area('Message shown to visitors', value=maint['message'], max_chars=storage.MAX_MAINTENANCE,
+            st.toggle(t('admin.maint_on'), value=maint['enabled'], key='maint_enabled')
+            st.text_area(t('admin.maint_message'), value=maint['message'], max_chars=storage.MAX_MAINTENANCE,
                          key='maint_message')
-            st.form_submit_button('Save maintenance settings', on_click=act_save_maintenance, args=(backend,))
-        st.caption('Admins are not blocked. Regular visitors see the maintenance screen while this is on.')
+            st.form_submit_button(t('admin.maint_save'), on_click=act_save_maintenance, args=(backend,))
+        st.caption(t('admin.maint_note'))
 
-        st.subheader('Announcements')
+        st.subheader(t('admin.announcements'))
         with st.form('announcement_form', clear_on_submit=False):
-            st.text_input('Message', max_chars=storage.MAX_ANNOUNCEMENT, key='ann_message',
-                          help='Any http or https link pasted here becomes the button link if the field below is empty.')
-            st.text_input('Button link (optional)', max_chars=storage.MAX_LINK, key='ann_link',
+            st.text_input(t('admin.ann_message'), max_chars=storage.MAX_ANNOUNCEMENT, key='ann_message',
+                          help=t('admin.ann_message_help'))
+            st.text_input(t('admin.ann_link'), max_chars=storage.MAX_LINK, key='ann_link',
                           placeholder='https://whatsapp.com/channel/... or @channelhandle',
-                          help='A WhatsApp channel URL, another https link, or a Storiiz @handle.')
+                          help=t('admin.ann_link_help'))
             cols = st.columns(3)
             with cols[0]:
-                st.selectbox('Style', storage.ANNOUNCEMENT_KINDS, key='ann_kind')
+                st.selectbox(t('admin.ann_style'), storage.ANNOUNCEMENT_KINDS, key='ann_kind',
+                             format_func=lambda k: i18n.label_or(f'kind.{k}', k))
             with cols[1]:
-                st.number_input('Lasts for', min_value=1, max_value=365, value=24, key='ann_amount')
+                st.number_input(t('admin.ann_lasts'), min_value=1, max_value=365, value=24, key='ann_amount')
             with cols[2]:
-                st.selectbox('Unit', ['Hours', 'Days'], key='ann_unit')
-            st.form_submit_button('Publish announcement', on_click=act_add_announcement, args=(backend,))
+                st.selectbox(t('admin.ann_unit'), ['Hours', 'Days'], key='ann_unit')
+            st.form_submit_button(t('admin.ann_publish'), on_click=act_add_announcement, args=(backend,))
         announcements = sorted(storage.list_announcements(backend), key=lambda a: a.get('created_at') or '',
                                reverse=True)
         now = storage.datetime.now(storage.timezone.utc)
         if not announcements:
-            st.caption('No announcements yet.')
+            st.caption(t('admin.ann_none'))
         for item in announcements:
             status = storage.announcement_status(item, now)
             expires = storage.parse_time(item.get('expires_at'))
@@ -604,37 +607,38 @@ def admin_view(backend):
             cols = st.columns([4, 1, 1])
             with cols[0]:
                 st.markdown(f"**{html.escape(item.get('message', ''))}**")
-                link_note = f" | link: {html.escape(item['link'])}" if item.get('link') else ''
-                st.caption(f"{item.get('kind')} | {status} | expires {when}{link_note}")
+                link_note = t('admin.ann_link_note', link=html.escape(item['link'])) if item.get('link') else ''
+                st.caption(t('admin.ann_meta', kind=i18n.label_or(f"kind.{item.get('kind')}", item.get('kind')),
+                             status=status, when=when) + link_note)
             with cols[1]:
                 if item.get('active'):
-                    st.button('Turn off', key=f"ann_off_{item['id']}", on_click=act_set_announcement,
+                    st.button(t('admin.ann_off'), key=f"ann_off_{item['id']}", on_click=act_set_announcement,
                               args=(backend, item['id'], False), use_container_width=True)
                 else:
-                    st.button('Turn on', key=f"ann_on_{item['id']}", on_click=act_set_announcement,
+                    st.button(t('admin.ann_on'), key=f"ann_on_{item['id']}", on_click=act_set_announcement,
                               args=(backend, item['id'], True), use_container_width=True)
             with cols[2]:
-                st.button('Delete', key=f"ann_del_{item['id']}", on_click=act_delete_announcement,
+                st.button(t('admin.ann_delete'), key=f"ann_del_{item['id']}", on_click=act_delete_announcement,
                           args=(backend, item['id']), use_container_width=True)
     else:
-        st.caption('Maintenance mode and announcements are managed by Super Admins and the Main Admin Account.')
+        st.caption(t('admin.maint_only'))
 
-    st.subheader('Channels')
+    st.subheader(t('admin.channels_title') if 'admin.channels_title' in i18n.STRINGS else 'Channels')
     if not channels:
-        st.info('No channels.')
+        st.info(t('admin.no_channels'))
     for channel in sorted(channels, key=lambda c: c.get('created_at') or '', reverse=True):
         badges = ''
         if channel.get('is_verified'):
-            badges += ' ✓ verified'
+            badges += ' ' + t('admin.badge_verified')
         if channel.get('is_pinned'):
-            badges += ' 📌 pinned'
+            badges += ' ' + t('admin.badge_pinned')
         st.markdown(f"**{html.escape(channel['handle'])}**{html.escape(badges)}")
-        st.caption(f"{channel.get('name') or ''} | {channel.get('category') or ''} | "
-                   f"by @{channel.get('owner') or 'sample'} | ❤ {channel.get('likes') or 0}")
+        st.caption(f"{channel.get('name') or ''} | {i18n.label_or(f'cat.{channel.get("category")}', channel.get('category') or '')} | "
+                   f"{t('admin.by_owner', owner=channel.get('owner') or 'sample')} | ❤ {channel.get('likes') or 0}")
         cols = st.columns(3)
         with cols[0]:
             st.button(
-                'Unverify' if channel.get('is_verified') else 'Verify',
+                t('admin.unverify') if channel.get('is_verified') else t('admin.verify'),
                 key=f"cv_{channel['id']}",
                 on_click=set_channel_flag,
                 args=(backend, channel['id'], 'is_verified', not channel.get('is_verified')),
@@ -642,30 +646,33 @@ def admin_view(backend):
             )
         with cols[1]:
             st.button(
-                'Unpin' if channel.get('is_pinned') else 'Pin to top',
+                t('admin.unpin') if channel.get('is_pinned') else t('admin.pin'),
                 key=f"cp_{channel['id']}",
                 on_click=set_channel_flag,
                 args=(backend, channel['id'], 'is_pinned', not channel.get('is_pinned')),
                 use_container_width=True,
             )
         with cols[2]:
-            st.button('Remove', key=f"admin_remove_{channel['id']}", on_click=remove_channel,
+            st.button(t('admin.remove'), key=f"admin_remove_{channel['id']}", on_click=remove_channel,
                       args=(backend, channel['id']), use_container_width=True)
 
-    st.subheader('Channel stats')
+    st.subheader(t('admin.channel_stats'))
     ranked_channels = sorted(channels, key=lambda c: c.get('likes') or 0, reverse=True)
     st.dataframe(
-        [{'handle': c['handle'], 'category': c.get('category') or '', 'owner': c.get('owner') or 'sample',
-          'likes': c.get('likes') or 0, 'verified': bool(c.get('is_verified')),
-          'pinned': bool(c.get('is_pinned'))} for c in ranked_channels],
+        [{t('col.handle'): c['handle'],
+          t('col.category'): i18n.label_or(f"cat.{c.get('category')}", c.get('category') or ''),
+          t('col.owner'): c.get('owner') or 'sample',
+          t('col.likes'): c.get('likes') or 0,
+          t('col.verified'): bool(c.get('is_verified')),
+          t('col.pinned'): bool(c.get('is_pinned'))} for c in ranked_channels],
         use_container_width=True,
     )
 
-    st.subheader('Custom roles')
+    st.subheader(t('admin.custom_roles'))
     if custom_roles.can_manage_roles(user):
         with st.expander('Manage roles (create, edit, delete)'):
             role_ui.manage_roles(backend)
-    st.caption("Roles are badges and perks only. They never change a user's level.")
+    st.caption(t('admin.roles_note'))
     with st.expander('Roles and their members'):
         role_ui.role_directory(backend)
 
@@ -674,30 +681,30 @@ def admin_view(backend):
     st.caption(f'Up to {storage.MAX_ROLES_PER_USER} roles per user. You can only change accounts below your own level.')
     role_ui.assignment_section(backend, owners, users)
 
-    st.subheader('Users')
-    st.caption('You can only change accounts below your own level. The Main Admin Account cannot be changed.')
+    st.subheader(t('admin.users'))
+    st.caption(t('admin.users_note'))
     for member in users:
         name = member['username']
         level = member_level(member, owners)
         user_roles_html = role_ui.badges_html(role_lookup.get(name, []))
         st.markdown(f"**@{html.escape(name)}**{level_badge(level)}{user_roles_html}", unsafe_allow_html=True)
-        st.caption(f"Joined {str(member.get('created_at') or '')[:10]}"
-                   + (' | banned' if member['is_banned'] else ''))
+        st.caption(t('admin.joined', date=str(member.get('created_at') or '')[:10])
+                   + (t('admin.banned_note') if member['is_banned'] else ''))
         actions = []
         if auth.can_change_admin_role(user, member):
             if member['is_admin']:
-                actions.append(('Demote to user', 'role', [backend, name, False]))
+                actions.append((t('admin.demote'), 'role', [backend, name, False]))
             else:
-                actions.append(('Make admin', 'role', [backend, name, True]))
+                actions.append((t('admin.make_admin'), 'role', [backend, name, True]))
         if super_user and auth.can_set_super_admin(user, member):
             if member['is_super_admin']:
-                actions.append(('Remove Super Admin', 'super', [backend, name, False]))
+                actions.append((t('admin.remove_super'), 'super', [backend, name, False]))
             else:
-                actions.append(('Make Super Admin', 'super', [backend, name, True]))
+                actions.append((t('admin.make_super'), 'super', [backend, name, True]))
         if auth.can_moderate_user(user, member):
-            actions.append(('Unverify' if member['is_verified'] else 'Verify', 'verify',
+            actions.append((t('admin.unverify_user') if member['is_verified'] else t('admin.verify_user'), 'verify',
                             [backend, name, not member['is_verified']]))
-            actions.append(('Unban' if member['is_banned'] else 'Ban', 'ban',
+            actions.append((t('admin.unban') if member['is_banned'] else t('admin.ban'), 'ban',
                             [backend, name, not member['is_banned']]))
         if actions:
             cols = st.columns(len(actions))
@@ -707,28 +714,28 @@ def admin_view(backend):
                     st.button(label, key=f'{kind}_{name}', on_click=handler, args=tuple(args),
                               use_container_width=True)
         if auth.can_reset_password(user, member):
-            with st.expander(f'Reset password for @{name}'):
-                st.text_input('New password', type='password', key=f'reset_{name}')
-                st.button('Set new password', key=f'resetbtn_{name}', on_click=act_reset_password,
+            with st.expander(t('admin.reset_expander', name=name)):
+                st.text_input(t('admin.new_password'), type='password', key=f'reset_{name}')
+                st.button(t('admin.set_password'), key=f'resetbtn_{name}', on_click=act_reset_password,
                           args=(backend, name))
 
-    st.subheader('Backup')
+    st.subheader(t('admin.backup'))
     snapshot = storage.export_snapshot(backend)
     st.download_button(
-        'Download backup (JSON)',
+        t('admin.download_backup'),
         data=json.dumps(snapshot, indent=2, default=str),
         file_name='storiiz-backup.json',
         mime='application/json',
         use_container_width=True,
     )
-    st.caption('The backup includes channels, users (no password hashes), roles, maintenance and announcements.')
+    st.caption(t('admin.backup_note'))
 
 
 # ---------- page ----------
 
 def maintenance_barrier(backend, message):
     st.markdown(
-        f"<div class='barrier'><h1>We'll be right back</h1><p>{html.escape(message)}</p></div>",
+        f"<div class='barrier'><h1>{html.escape(t('maint.title'))}</h1><p>{html.escape(message)}</p></div>",
         unsafe_allow_html=True,
     )
     account_bar(backend)
@@ -756,7 +763,7 @@ def announcement_banners(backend):
                 st.link_button(label, url, use_container_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
         with cols[-1]:
-            if st.button('✕', key=f"dismiss_{item['id']}", help='Dismiss'):
+            if st.button('✕', key=f"dismiss_{item['id']}", help=t('announce.dismiss')):
                 st.session_state.dismissed.add(item['id'])
                 st.rerun()
 
@@ -769,6 +776,7 @@ def main():
     st.sidebar.caption(f'Storage: {backend.name}')
     if backend.note:
         st.sidebar.warning(backend.note)
+    i18n.language_toggle()
 
     refresh_user(backend)
     st.markdown("<div class='brand'>STORIIZ<span>.</span></div>", unsafe_allow_html=True)
@@ -784,18 +792,15 @@ def main():
 
     account_bar(backend)
     if maint['enabled']:
-        st.markdown(
-            "<div class='maint-banner'>⚠ Maintenance mode is ON. Regular visitors see a maintenance screen. "
-            "Admins can still use the full site.</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"<div class='maint-banner'>{html.escape(t('maint.banner'))}</div>", unsafe_allow_html=True)
     announcement_banners(backend)
 
-    names = ['Feed', 'Submit a channel'] + (['Admin Panel'] if is_admin_user() else [])
+    names = [t('tab.feed'), t('tab.submit')] + ([t('tab.admin')] if is_admin_user() else [])
     tabs = st.tabs(names)
     with tabs[0]:
-        query = st.text_input('Search', placeholder='Search channels...', label_visibility='collapsed')
-        pill = st.radio('Category', list(PILLS.keys()), horizontal=True, label_visibility='collapsed')
+        query = st.text_input(t('search.label'), placeholder=t('search.placeholder'), label_visibility='collapsed')
+        pill = st.radio(t('category.label'), list(PILLS.keys()), horizontal=True, label_visibility='collapsed',
+                        format_func=t)
         if query != st.session_state.get('last_query') or pill != st.session_state.get('last_pill'):
             st.session_state.visible = PAGE_STEP
             st.session_state.last_query = query
