@@ -3,6 +3,7 @@
 Uses Supabase when SUPABASE_URL and SUPABASE_KEY are set (st.secrets or environment variables).
 Otherwise uses a local SQLite database that is created automatically in data/storiiz.db.
 The admin account is ensured on every backend start. Older SQLite files get new columns automatically.
+Role levels and permission checks live in auth.py.
 """
 
 import base64
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    is_super_admin INTEGER NOT NULL DEFAULT 0,
     is_verified INTEGER NOT NULL DEFAULT 0,
     is_banned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT
@@ -123,6 +125,7 @@ def _user_out(row):
     return {
         'username': row['username'],
         'is_admin': bool(row.get('is_admin')),
+        'is_super_admin': bool(row.get('is_super_admin')),
         'is_verified': bool(row.get('is_verified')),
         'is_banned': bool(row.get('is_banned')),
         'created_at': row.get('created_at'),
@@ -152,6 +155,7 @@ class SQLiteBackend:
             })
             _add_missing_columns(conn, 'users', {
                 'is_admin': 'INTEGER NOT NULL DEFAULT 0',
+                'is_super_admin': 'INTEGER NOT NULL DEFAULT 0',
                 'is_verified': 'INTEGER NOT NULL DEFAULT 0',
                 'is_banned': 'INTEGER NOT NULL DEFAULT 0',
             })
@@ -197,7 +201,8 @@ class SQLiteBackend:
     def list_users(self):
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                'SELECT username, is_admin, is_verified, is_banned, created_at FROM users ORDER BY created_at'
+                'SELECT username, is_admin, is_super_admin, is_verified, is_banned, created_at '
+                'FROM users ORDER BY created_at'
             ).fetchall()
         return [_user_out(dict(row)) for row in rows]
 
@@ -206,6 +211,7 @@ class SQLiteBackend:
             'username': data['username'],
             'password_hash': data['password_hash'],
             'is_admin': bool(data.get('is_admin')),
+            'is_super_admin': bool(data.get('is_super_admin')),
             'is_verified': bool(data.get('is_verified')),
             'is_banned': bool(data.get('is_banned')),
             'created_at': now_iso(),
@@ -295,7 +301,9 @@ class SupabaseBackend:
         return rows[0] if rows else None
 
     def list_users(self):
-        rows = self._table('users').select('username,is_admin,is_verified,is_banned,created_at').execute().data or []
+        rows = (self._table('users')
+                .select('username,is_admin,is_super_admin,is_verified,is_banned,created_at')
+                .execute().data or [])
         return [_user_out(row) for row in rows]
 
     def create_user(self, data):
@@ -303,6 +311,7 @@ class SupabaseBackend:
             'username': data['username'],
             'password_hash': data['password_hash'],
             'is_admin': bool(data.get('is_admin')),
+            'is_super_admin': bool(data.get('is_super_admin')),
             'is_verified': bool(data.get('is_verified')),
             'is_banned': bool(data.get('is_banned')),
             'created_at': now_iso(),
