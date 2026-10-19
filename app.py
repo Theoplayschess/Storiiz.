@@ -18,15 +18,15 @@ DARK_BG = '#0B0F0C'
 CARD_BG = '#141A16'
 VERIFIED_BLUE = '#1D9BF0'
 
-# Pill id -> (translation key, category filter). Trending shows everything ranked.
+# Pill translation key -> stored category filter. Trending shows everything ranked.
 PILLS = {
-    'pill.trending': (None),
-    'pill.fitness': ('Fitness'),
-    'pill.news': ('News'),
-    'pill.gaming': ('Entertainment'),
-    'pill.cooking': ('Food'),
-    'pill.pets': ('Animals'),
-    'pill.tech': ('Tech'),
+    'pill.trending': None,
+    'pill.fitness': 'Fitness',
+    'pill.news': 'News',
+    'pill.gaming': 'Entertainment',
+    'pill.cooking': 'Food',
+    'pill.pets': 'Animals',
+    'pill.tech': 'Tech',
 }
 
 # Level -> (CSS class, translation key) for the role badge.
@@ -103,6 +103,17 @@ div[role="radiogroup"] label p {{ font-weight: 700; font-size: 0.98rem; }}
 @st.cache_resource
 def get_backend():
     return storage.get_backend()
+
+
+# ---------- labels ----------
+
+def category_label(value):
+    """Translated display label for a stored category or announcement kind."""
+    return i18n.label_or(f'cat.{value}', value or '')
+
+
+def kind_label(value):
+    return i18n.label_or(f'kind.{value}', value or '')
 
 
 # ---------- levels ----------
@@ -292,11 +303,11 @@ def render_card(backend, channel, role_lookup=None):
     handle = html.escape(channel['handle'])
     title = html.escape(channel.get('name') or channel['handle'])
     desc = html.escape(channel.get('caption') or '')
-    category = html.escape(i18n.label_or(f"cat.{channel.get('category')}", channel.get('category') or ''))
+    category = html.escape(category_label(channel.get('category')))
     owner = channel.get('owner')
     owner_roles = (role_lookup or {}).get(owner, []) if owner else []
     role_html = role_ui.badges_html(owner_roles)
-    owner_html = (f"<div class='owner'>{html.escape(t('card.submitted_by', name=owner))}</div>" if owner else '')
+    owner_html = f"<div class='owner'>{html.escape(t('card.submitted_by', name=owner))}</div>" if owner else ''
     verified = f"<span class='verified'>{html.escape(t('card.verified'))}</span>" if channel.get('is_verified') else ''
     pinned = f"<span class='pinned'>{html.escape(t('card.pinned'))}</span>" if channel.get('is_pinned') else ''
     avatar_src = html.escape(image_src(channel.get('avatar') or channel.get('image')))
@@ -393,8 +404,7 @@ def submit_view(backend):
     with st.form('submit_channel', clear_on_submit=True):
         handle = st.text_input(t('submit.handle'), placeholder='@yourchannel')
         name = st.text_input(t('submit.name'))
-        category = st.selectbox(t('submit.category'), storage.CATEGORIES,
-                                format_func=lambda c: i18n.label_or(f'cat.{c}', c))
+        category = st.selectbox(t('submit.category'), storage.CATEGORIES, format_func=category_label)
         caption = st.text_area(t('submit.caption'), max_chars=storage.MAX_CAPTION)
         image_url = st.text_input(t('submit.image_url'), placeholder='https://...')
         upload = st.file_uploader(
@@ -545,6 +555,10 @@ def act_delete_announcement(backend, announcement_id):
 
 # ---------- admin panel ----------
 
+def unit_label(value):
+    return t('admin.ann_days') if value == 'Days' else t('admin.ann_hours')
+
+
 def admin_view(backend):
     user = current_user()
     channels = backend.list_channels()
@@ -588,12 +602,11 @@ def admin_view(backend):
                           help=t('admin.ann_link_help'))
             cols = st.columns(3)
             with cols[0]:
-                st.selectbox(t('admin.ann_style'), storage.ANNOUNCEMENT_KINDS, key='ann_kind',
-                             format_func=lambda k: i18n.label_or(f'kind.{k}', k))
+                st.selectbox(t('admin.ann_style'), storage.ANNOUNCEMENT_KINDS, key='ann_kind', format_func=kind_label)
             with cols[1]:
                 st.number_input(t('admin.ann_lasts'), min_value=1, max_value=365, value=24, key='ann_amount')
             with cols[2]:
-                st.selectbox(t('admin.ann_unit'), ['Hours', 'Days'], key='ann_unit')
+                st.selectbox(t('admin.ann_unit'), ['Hours', 'Days'], key='ann_unit', format_func=unit_label)
             st.form_submit_button(t('admin.ann_publish'), on_click=act_add_announcement, args=(backend,))
         announcements = sorted(storage.list_announcements(backend), key=lambda a: a.get('created_at') or '',
                                reverse=True)
@@ -608,8 +621,8 @@ def admin_view(backend):
             with cols[0]:
                 st.markdown(f"**{html.escape(item.get('message', ''))}**")
                 link_note = t('admin.ann_link_note', link=html.escape(item['link'])) if item.get('link') else ''
-                st.caption(t('admin.ann_meta', kind=i18n.label_or(f"kind.{item.get('kind')}", item.get('kind')),
-                             status=status, when=when) + link_note)
+                meta = t('admin.ann_meta', kind=kind_label(item.get('kind')), status=status, when=when)
+                st.caption(meta + link_note)
             with cols[1]:
                 if item.get('active'):
                     st.button(t('admin.ann_off'), key=f"ann_off_{item['id']}", on_click=act_set_announcement,
@@ -623,7 +636,7 @@ def admin_view(backend):
     else:
         st.caption(t('admin.maint_only'))
 
-    st.subheader(t('admin.channels_title') if 'admin.channels_title' in i18n.STRINGS else 'Channels')
+    st.subheader(t('admin.channels_heading'))
     if not channels:
         st.info(t('admin.no_channels'))
     for channel in sorted(channels, key=lambda c: c.get('created_at') or '', reverse=True):
@@ -633,8 +646,9 @@ def admin_view(backend):
         if channel.get('is_pinned'):
             badges += ' ' + t('admin.badge_pinned')
         st.markdown(f"**{html.escape(channel['handle'])}**{html.escape(badges)}")
-        st.caption(f"{channel.get('name') or ''} | {i18n.label_or(f'cat.{channel.get("category")}', channel.get('category') or '')} | "
-                   f"{t('admin.by_owner', owner=channel.get('owner') or 'sample')} | ❤ {channel.get('likes') or 0}")
+        owner_text = t('admin.by_owner', owner=channel.get('owner') or 'sample')
+        st.caption(f"{channel.get('name') or ''} | {category_label(channel.get('category'))} | "
+                   f"{owner_text} | ❤ {channel.get('likes') or 0}")
         cols = st.columns(3)
         with cols[0]:
             st.button(
@@ -660,7 +674,7 @@ def admin_view(backend):
     ranked_channels = sorted(channels, key=lambda c: c.get('likes') or 0, reverse=True)
     st.dataframe(
         [{t('col.handle'): c['handle'],
-          t('col.category'): i18n.label_or(f"cat.{c.get('category')}", c.get('category') or ''),
+          t('col.category'): category_label(c.get('category')),
           t('col.owner'): c.get('owner') or 'sample',
           t('col.likes'): c.get('likes') or 0,
           t('col.verified'): bool(c.get('is_verified')),
@@ -670,17 +684,17 @@ def admin_view(backend):
 
     st.subheader(t('admin.custom_roles'))
     if custom_roles.can_manage_roles(user):
-        with st.expander('Manage roles (create, edit, delete)'):
+        with st.expander(t('admin.manage_roles')):
             role_ui.manage_roles(backend)
     st.caption(t('admin.roles_note'))
-    with st.expander('Roles and their members'):
+    with st.expander(t('admin.role_directory')):
         role_ui.role_directory(backend)
 
-    role_lookup = storage.role_map(backend)
-    st.subheader('Assign custom roles')
-    st.caption(f'Up to {storage.MAX_ROLES_PER_USER} roles per user. You can only change accounts below your own level.')
+    st.subheader(t('admin.assign_roles'))
+    st.caption(t('admin.assign_note', max=storage.MAX_ROLES_PER_USER))
     role_ui.assignment_section(backend, owners, users)
 
+    role_lookup = storage.role_map(backend)
     st.subheader(t('admin.users'))
     st.caption(t('admin.users_note'))
     for member in users:
