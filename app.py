@@ -14,9 +14,13 @@ st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
 
 PAGE_STEP = 8
 GREEN = '#25D366'
-DARK_BG = '#0B0F0C'
-CARD_BG = '#141A16'
-VERIFIED_BLUE = '#1D9BF0'
+INK = '#EDF1EE'
+MUTED = '#8C9A92'
+SOFT = '#B7C3BB'
+PAGE_BG = '#0B0F0C'
+SURFACE = '#121813'
+LINE = '#1E2820'
+VERIFIED_BLUE = '#4DA3F5'
 
 # Pill translation key -> stored category filter. Trending shows everything ranked.
 PILLS = {
@@ -42,60 +46,76 @@ LEVEL_BADGES = {
 
 CSS = f'''
 <style>
-.stApp {{ background: {DARK_BG}; color: #F2F5F3; }}
-.block-container {{ max-width: 720px; padding-top: 1rem; padding-bottom: 4rem; }}
+.stApp {{ background: {PAGE_BG}; color: {INK}; }}
+.block-container {{ max-width: 680px; padding-top: 2.2rem; padding-bottom: 5rem; }}
 header[data-testid="stHeader"] {{ background: transparent; }}
-.brand {{ font-size: 2rem; font-weight: 900; letter-spacing: 0.5px; color: {GREEN}; }}
-.brand span {{ color: #F2F5F3; }}
-.card {{ background: {CARD_BG}; border: 1px solid #1F2A23; border-radius: 22px;
-  padding: 1.1rem; margin-bottom: 1.6rem; box-shadow: 0 0 28px rgba(37,211,102,0.08); }}
-.card-head {{ display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.9rem; }}
-.avatar {{ width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid {GREEN}; }}
-.handle {{ font-size: 1.25rem; font-weight: 800; }}
-.tag {{ display: inline-block; background: #1E2B23; color: {GREEN}; border-radius: 999px;
-  padding: 0.15rem 0.7rem; font-size: 0.9rem; font-weight: 700; margin-left: 0.4rem; }}
-.verified {{ display: inline-block; background: {VERIFIED_BLUE}; color: #FFFFFF; border-radius: 999px;
-  padding: 0.12rem 0.55rem; font-size: 0.8rem; font-weight: 800; margin-left: 0.45rem; vertical-align: middle; }}
-.pinned {{ display: inline-block; background: #2B2412; color: #F5B301; border-radius: 999px;
-  padding: 0.12rem 0.55rem; font-size: 0.8rem; font-weight: 800; margin-left: 0.4rem; vertical-align: middle; }}
-.likes-badge {{ margin-left: auto; background: #1E2B23; border-radius: 999px; padding: 0.3rem 0.8rem;
-  font-weight: 700; font-size: 1rem; white-space: nowrap; }}
-.media {{ width: 100%; border-radius: 16px; display: block; max-height: 520px; object-fit: cover; }}
-.title {{ font-size: 1.5rem; font-weight: 800; margin: 0.9rem 0 0.25rem 0; }}
-.desc {{ font-size: 1.1rem; color: #B9C6BE; line-height: 1.5; margin-bottom: 0.9rem; }}
-.hashtags {{ color: {GREEN}; font-weight: 600; margin-bottom: 0.9rem; }}
-.owner {{ color: #8FA096; font-size: 0.95rem; margin-bottom: 0.6rem; }}
-.lvl {{ display: inline-block; border-radius: 999px; padding: 0.1rem 0.6rem; font-size: 0.8rem;
-  font-weight: 800; margin-left: 0.4rem; vertical-align: middle; }}
-.lvl-main {{ background: #FF4D4D; color: #FFFFFF; }}
-.lvl-super {{ background: #B26BFF; color: #FFFFFF; }}
-.lvl-admin {{ background: #F5B301; color: #1A1200; }}
-.lvl-verified {{ background: {VERIFIED_BLUE}; color: #FFFFFF; }}
-.lvl-owner {{ background: #1E2B23; color: {GREEN}; border: 1px solid {GREEN}; }}
-.lvl-user {{ background: #26302A; color: #B9C6BE; }}
-.lvl-guest {{ background: #1A1F1B; color: #8FA096; }}
-.userline {{ font-weight: 700; font-size: 1.05rem; padding-top: 0.5rem; }}
-.maint-banner {{ background: #3A2A00; border: 1px solid #F5B301; color: #FFE08A; border-radius: 14px;
-  padding: 0.6rem 0.9rem; font-weight: 700; margin-bottom: 0.8rem; }}
-.barrier {{ text-align: center; padding: 4rem 1.2rem; background: {CARD_BG}; border: 1px solid #1F2A23;
-  border-radius: 24px; margin: 2rem 0; }}
-.barrier h1 {{ font-size: 2.2rem !important; color: {GREEN}; }}
-.barrier p {{ font-size: 1.2rem; color: #B9C6BE; }}
-.announce-cta a {{ border-radius: 12px !important; font-weight: 800 !important; background: {GREEN} !important;
-  color: #04130A !important; border: none !important; min-height: 2.8rem; display: flex; align-items: center;
+[data-testid="stSidebar"] {{ display: none; }}
+
+.brand {{ font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: {INK};
+  margin-bottom: 1.6rem; }}
+.brand span {{ color: {GREEN}; }}
+
+.card {{ background: {SURFACE}; border: 1px solid {LINE}; border-radius: 18px;
+  padding: 1.25rem 1.3rem 1rem 1.3rem; margin-bottom: 1rem; }}
+.card-head {{ display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.9rem; }}
+.avatar {{ width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 1px solid {LINE}; }}
+.handle {{ font-size: 1.05rem; font-weight: 600; color: {INK}; }}
+.tag {{ display: inline-block; color: {MUTED}; font-size: 0.8rem; font-weight: 500;
+  margin-left: 0.5rem; }}
+.verified {{ display: inline-block; color: {VERIFIED_BLUE}; font-size: 0.8rem; font-weight: 600;
+  margin-left: 0.5rem; }}
+.pinned {{ display: inline-block; color: #D9A52B; font-size: 0.8rem; font-weight: 600;
+  margin-left: 0.5rem; }}
+.likes-badge {{ margin-left: auto; color: {MUTED}; font-size: 0.9rem; font-weight: 500; white-space: nowrap; }}
+.media {{ width: 100%; border-radius: 12px; display: block; max-height: 480px; object-fit: cover; }}
+.title {{ font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 1rem 0 0.3rem 0; color: {INK}; }}
+.desc {{ font-size: 1rem; color: {SOFT}; line-height: 1.6; margin-bottom: 0.8rem; }}
+.hashtags {{ color: {MUTED}; font-size: 0.9rem; margin-bottom: 0.4rem; }}
+.owner {{ color: {MUTED}; font-size: 0.85rem; margin-bottom: 0.5rem; }}
+
+.lvl {{ display: inline-block; font-size: 0.75rem; font-weight: 600; margin-left: 0.5rem;
+  vertical-align: middle; padding: 0.05rem 0.5rem; border-radius: 6px; border: 1px solid {LINE}; }}
+.lvl-main {{ color: #FF7A7A; border-color: #4A2424; }}
+.lvl-super {{ color: #C9A2FF; border-color: #3A2A4D; }}
+.lvl-admin {{ color: #E8C36A; border-color: #4A3D1C; }}
+.lvl-verified {{ color: {VERIFIED_BLUE}; border-color: #1E3550; }}
+.lvl-owner {{ color: {GREEN}; border-color: #1E3A2A; }}
+.lvl-user {{ color: {SOFT}; }}
+.lvl-guest {{ color: {MUTED}; }}
+
+.userline {{ font-weight: 600; font-size: 0.98rem; padding: 0.2rem 0 0.4rem 0; color: {INK}; }}
+.maint-banner {{ color: #E8C36A; border-left: 2px solid #E8C36A; padding: 0.2rem 0 0.2rem 0.8rem;
+  font-size: 0.92rem; margin-bottom: 1rem; }}
+.barrier {{ padding: 3.5rem 0.5rem 2.5rem 0.5rem; margin: 1.5rem 0; border-top: 1px solid {LINE}; }}
+.barrier h1 {{ font-size: 1.9rem !important; font-weight: 700 !important; letter-spacing: -0.02em;
+  color: {INK} !important; margin-bottom: 0.6rem !important; }}
+.barrier p {{ font-size: 1.05rem; color: {SOFT}; line-height: 1.6; }}
+
+.announce-cta a {{ border-radius: 10px !important; font-weight: 600 !important; background: {GREEN} !important;
+  color: #05130A !important; border: none !important; min-height: 2.5rem; display: flex; align-items: center;
   justify-content: center; text-decoration: none; }}
-.stButton button {{ border-radius: 14px !important; font-weight: 700 !important; font-size: 1.05rem !important;
-  background: #1E2B23 !important; color: #F2F5F3 !important; border: 1px solid #2B3A31 !important; min-height: 3.1rem; }}
-.stLinkButton a {{ border-radius: 14px !important; font-weight: 800 !important; font-size: 1.1rem !important;
-  background: {GREEN} !important; color: #04130A !important; border: none !important; min-height: 3.1rem;
+
+.stButton button {{ border-radius: 10px !important; font-weight: 500 !important; font-size: 0.95rem !important;
+  background: transparent !important; color: {INK} !important; border: 1px solid {LINE} !important;
+  min-height: 2.6rem; transition: border-color 0.15s ease, background 0.15s ease; }}
+.stButton button:hover {{ border-color: #33413A !important; background: #161E18 !important; }}
+.stButton button:disabled {{ color: {MUTED} !important; }}
+.stLinkButton a {{ border-radius: 10px !important; font-weight: 600 !important; font-size: 0.95rem !important;
+  background: {GREEN} !important; color: #05130A !important; border: none !important; min-height: 2.6rem;
   display: flex; align-items: center; justify-content: center; text-decoration: none; }}
-.stTextInput input {{ background: {CARD_BG} !important; color: #F2F5F3 !important; border-radius: 14px !important;
-  border: 1px solid #1F2A23 !important; font-size: 1.05rem; }}
-div[role="radiogroup"] {{ gap: 0.5rem; flex-wrap: wrap; }}
-div[role="radiogroup"] label {{ background: {CARD_BG}; border: 1px solid #1F2A23; border-radius: 999px;
-  padding: 0.35rem 0.9rem; }}
-div[role="radiogroup"] label:has(input:checked) {{ background: {GREEN}; color: #04130A; border-color: {GREEN}; }}
-div[role="radiogroup"] label p {{ font-weight: 700; font-size: 0.98rem; }}
+
+.stTextInput input, .stTextArea textarea {{ background: {SURFACE} !important; color: {INK} !important;
+  border-radius: 10px !important; border: 1px solid {LINE} !important; font-size: 0.98rem; }}
+.stTextInput input:focus, .stTextArea textarea:focus {{ border-color: #2F4A39 !important; box-shadow: none !important; }}
+
+div[role="radiogroup"] {{ gap: 0.4rem; flex-wrap: wrap; }}
+div[role="radiogroup"] label {{ background: transparent; border: 1px solid {LINE}; border-radius: 999px;
+  padding: 0.25rem 0.8rem; }}
+div[role="radiogroup"] label:has(input:checked) {{ background: #16241B; border-color: #2F4A39; }}
+div[role="radiogroup"] label p {{ font-weight: 500; font-size: 0.9rem; color: {SOFT}; }}
+div[role="radiogroup"] label:has(input:checked) p {{ color: {INK}; }}
+
+h2, h3 {{ font-weight: 600 !important; letter-spacing: -0.01em; }}
 </style>
 '''
 
@@ -210,7 +230,7 @@ def do_login(backend, username, password):
 
 
 def login_form(backend):
-    with st.form('login_form'):
+    with st.form('login_form', border=False):
         username = st.text_input(t('auth.username'), key='login_username')
         password = st.text_input(t('auth.password'), type='password', key='login_password')
         submitted = st.form_submit_button(t('auth.login_button'))
@@ -219,7 +239,7 @@ def login_form(backend):
 
 
 def signup_form(backend):
-    with st.form('signup_form'):
+    with st.form('signup_form', border=False):
         username = st.text_input(t('auth.username'), help=t('auth.username_help'), key='signup_username')
         password = st.text_input(t('auth.password'), type='password', help=t('auth.password_help'),
                                  key='signup_password')
@@ -323,7 +343,7 @@ def render_card(backend, channel, role_lookup=None):
     <div>
       <span class='handle'>{handle}</span>{verified}{pinned}{role_html}<span class='tag'>{category}</span>
     </div>
-    <div class='likes-badge'>❤ {likes}</div>
+    <div class='likes-badge'>{likes}</div>
   </div>
   {owner_html}
   <img class='media' src='{media_src}' alt='{title}'/>
@@ -401,7 +421,7 @@ def submit_view(backend):
         st.info(t('submit.login_prompt'))
         return
     st.write(t('submit.intro'))
-    with st.form('submit_channel', clear_on_submit=True):
+    with st.form('submit_channel', clear_on_submit=True, border=False):
         handle = st.text_input(t('submit.handle'), placeholder='@yourchannel')
         name = st.text_input(t('submit.name'))
         category = st.selectbox(t('submit.category'), storage.CATEGORIES, format_func=category_label)
@@ -586,7 +606,7 @@ def admin_view(backend):
     if super_user:
         st.subheader(t('admin.maintenance'))
         maint = storage.get_maintenance(backend)
-        with st.form('maintenance_form'):
+        with st.form('maintenance_form', border=False):
             st.toggle(t('admin.maint_on'), value=maint['enabled'], key='maint_enabled')
             st.text_area(t('admin.maint_message'), value=maint['message'], max_chars=storage.MAX_MAINTENANCE,
                          key='maint_message')
@@ -594,7 +614,7 @@ def admin_view(backend):
         st.caption(t('admin.maint_note'))
 
         st.subheader(t('admin.announcements'))
-        with st.form('announcement_form', clear_on_submit=False):
+        with st.form('announcement_form', clear_on_submit=False, border=False):
             st.text_input(t('admin.ann_message'), max_chars=storage.MAX_ANNOUNCEMENT, key='ann_message',
                           help=t('admin.ann_message_help'))
             st.text_input(t('admin.ann_link'), max_chars=storage.MAX_LINK, key='ann_link',
@@ -642,13 +662,13 @@ def admin_view(backend):
     for channel in sorted(channels, key=lambda c: c.get('created_at') or '', reverse=True):
         badges = ''
         if channel.get('is_verified'):
-            badges += ' ' + t('admin.badge_verified')
+            badges += '  ' + t('admin.badge_verified')
         if channel.get('is_pinned'):
-            badges += ' ' + t('admin.badge_pinned')
+            badges += '  ' + t('admin.badge_pinned')
         st.markdown(f"**{html.escape(channel['handle'])}**{html.escape(badges)}")
         owner_text = t('admin.by_owner', owner=channel.get('owner') or 'sample')
-        st.caption(f"{channel.get('name') or ''} | {category_label(channel.get('category'))} | "
-                   f"{owner_text} | ❤ {channel.get('likes') or 0}")
+        st.caption(f"{channel.get('name') or ''} · {category_label(channel.get('category'))} · "
+                   f"{owner_text} · {channel.get('likes') or 0}")
         cols = st.columns(3)
         with cols[0]:
             st.button(
@@ -787,13 +807,14 @@ def main():
     st.markdown(CSS, unsafe_allow_html=True)
     role_ui.inject_css()
     backend = get_backend()
-    st.sidebar.caption(f'Storage: {backend.name}')
-    if backend.note:
-        st.sidebar.warning(backend.note)
-    i18n.language_toggle()
-
     refresh_user(backend)
-    st.markdown("<div class='brand'>STORIIZ<span>.</span></div>", unsafe_allow_html=True)
+
+    top = st.columns([3, 2])
+    with top[0]:
+        st.markdown("<div class='brand'>Storiiz<span>.</span></div>", unsafe_allow_html=True)
+    with top[1]:
+        i18n.language_toggle()
+
     notice = st.session_state.pop('notice', None)
     if notice:
         kind, text = notice
