@@ -4,6 +4,8 @@ import json
 import streamlit as st
 
 import auth
+import custom_roles
+import role_ui
 import storage
 
 st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
@@ -283,7 +285,7 @@ def image_src(value):
     return source if isinstance(source, str) else ''
 
 
-def render_card(backend, channel):
+def render_card(backend, channel, role_lookup=None):
     user = current_user()
     can_moderate = is_admin_user()
     handle = html.escape(channel['handle'])
@@ -291,6 +293,8 @@ def render_card(backend, channel):
     desc = html.escape(channel.get('caption') or '')
     category = html.escape(channel.get('category') or '')
     owner = channel.get('owner')
+    owner_roles = (role_lookup or {}).get(owner, []) if owner else []
+    role_html = role_ui.badges_html(owner_roles)
     owner_html = f"<div class='owner'>Submitted by @{html.escape(owner)}</div>" if owner else ''
     verified = "<span class='verified'>✓ Verified</span>" if channel.get('is_verified') else ''
     pinned = "<span class='pinned'>📌 Pinned</span>" if channel.get('is_pinned') else ''
@@ -305,7 +309,7 @@ def render_card(backend, channel):
   <div class='card-head'>
     <img class='avatar' src='{avatar_src}' alt=''/>
     <div>
-      <span class='handle'>{handle}</span>{verified}{pinned}<span class='tag'>{category}</span>
+      <span class='handle'>{handle}</span>{verified}{pinned}{role_html}<span class='tag'>{category}</span>
     </div>
     <div class='likes-badge'>❤ {likes}</div>
   </div>
@@ -368,8 +372,9 @@ def feed_view(backend, query, pill):
         st.info('No channels match your search or filter.')
         return
     visible = st.session_state.visible
+    role_lookup = storage.role_map(backend)
     for channel in queue[:visible]:
-        render_card(backend, channel)
+        render_card(backend, channel, role_lookup)
     if visible < len(queue):
         if st.button(f'Load more ({len(queue) - visible} left)', use_container_width=True):
             st.session_state.visible = visible + PAGE_STEP
@@ -656,12 +661,26 @@ def admin_view(backend):
         use_container_width=True,
     )
 
+    st.subheader('Custom roles')
+    if custom_roles.can_manage_roles(user):
+        with st.expander('Manage roles (create, edit, delete)'):
+            role_ui.manage_roles(backend)
+    st.caption("Roles are badges and perks only. They never change a user's level.")
+    with st.expander('Roles and their members'):
+        role_ui.role_directory(backend)
+
+    role_lookup = storage.role_map(backend)
+    st.subheader('Assign custom roles')
+    st.caption(f'Up to {storage.MAX_ROLES_PER_USER} roles per user. You can only change accounts below your own level.')
+    role_ui.assignment_section(backend, owners, users)
+
     st.subheader('Users')
     st.caption('You can only change accounts below your own level. The Main Admin Account cannot be changed.')
     for member in users:
         name = member['username']
         level = member_level(member, owners)
-        st.markdown(f"**@{html.escape(name)}**{level_badge(level)}", unsafe_allow_html=True)
+        user_roles_html = role_ui.badges_html(role_lookup.get(name, []))
+        st.markdown(f"**@{html.escape(name)}**{level_badge(level)}{user_roles_html}", unsafe_allow_html=True)
         st.caption(f"Joined {str(member.get('created_at') or '')[:10]}"
                    + (' | banned' if member['is_banned'] else ''))
         actions = []
@@ -702,7 +721,7 @@ def admin_view(backend):
         mime='application/json',
         use_container_width=True,
     )
-    st.caption('The backup includes channels, users (no password hashes), maintenance and announcements.')
+    st.caption('The backup includes channels, users (no password hashes), roles, maintenance and announcements.')
 
 
 # ---------- page ----------
@@ -745,6 +764,7 @@ def announcement_banners(backend):
 def main():
     init_state()
     st.markdown(CSS, unsafe_allow_html=True)
+    role_ui.inject_css()
     backend = get_backend()
     st.sidebar.caption(f'Storage: {backend.name}')
     if backend.note:
