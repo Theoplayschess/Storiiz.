@@ -23,11 +23,12 @@ SURFACE = '#121813'
 LINE = '#1E2820'
 VERIFIED_BLUE = '#4DA3F5'
 
+# Dock items: view key, icon shown on the button, tooltip text (French label).
 DOCK_ITEMS = [
-    ('video', 'Vidéo'),
-    ('photo', 'Photo'),
-    ('post', 'Poster'),
-    ('settings', 'Paramètres'),
+    ('video', '🎬', 'Vidéo'),
+    ('photo', '📷', 'Photo'),
+    ('post', '➕', 'Poster'),
+    ('settings', '⚙️', 'Paramètres'),
 ]
 
 # Level -> (CSS class, translation key) for the role badge.
@@ -128,11 +129,13 @@ h2, h3 {{ font-weight: 600 !important; letter-spacing: -0.01em; }}
 /* Bottom dock: the row that contains the marker becomes a fixed bar at the bottom of the screen */
 div[data-testid="stHorizontalBlock"]:has(.dock-marker) {{ position: fixed; bottom: 0; left: 0; right: 0; max-width: 680px;
   margin: 0 auto; z-index: 999; background: rgba(11,15,12,0.94); backdrop-filter: blur(12px);
-  border-top: 1px solid {LINE}; padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom)) 0.6rem;
+  border-top: 1px solid {LINE}; padding: 0.4rem 0.6rem calc(0.4rem + env(safe-area-inset-bottom)) 0.6rem;
   gap: 0.4rem; flex-wrap: nowrap !important; }}
 div[data-testid="stHorizontalBlock"]:has(.dock-marker) > div {{ min-width: 0 !important; flex: 1 1 0 !important;
   width: auto !important; }}
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button {{ min-height: 2.9rem; font-size: 0.9rem !important; }}
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton {{ display: flex; justify-content: center; }}
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button {{ min-height: 3rem; width: 100%;
+  font-size: 1.35rem !important; line-height: 1 !important; padding: 0 !important; }}
 div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button[kind="primary"] {{ background: {GREEN} !important;
   color: #05130A !important; border-color: {GREEN} !important; }}
 .dock-marker {{ display: none; }}
@@ -882,16 +885,17 @@ def announcement_banners(backend):
 
 
 def bottom_dock():
-    """Fixed bottom navigation. The active item is shown as a primary button."""
+    """Fixed bottom navigation with icon buttons. The active item is shown as a primary button."""
     cols = st.columns(len(DOCK_ITEMS))
-    for col, (name, label) in zip(cols, DOCK_ITEMS):
+    for col, (name, icon, label) in zip(cols, DOCK_ITEMS):
         with col:
             if name == 'video':
                 st.markdown("<span class='dock-marker'></span>", unsafe_allow_html=True)
             active = st.session_state.view == name
             st.button(
-                label,
+                icon,
                 key=f'nav_{name}',
+                help=label,
                 on_click=set_view,
                 args=(name,),
                 type='primary' if active else 'secondary',
