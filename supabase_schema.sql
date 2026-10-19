@@ -14,16 +14,20 @@ create table if not exists channels (
   created_at timestamptz default now()
 );
 
--- Owner of a submitted channel (the username that submitted it).
+-- Username of the account that submitted the channel.
 alter table channels add column if not exists owner text;
 
--- User accounts. Passwords are stored only as PBKDF2 hashes, never in plain text.
+-- Accounts use only a username and a password. Passwords are stored only as PBKDF2 hashes.
 create table if not exists users (
   username text primary key,
-  email text,
   password_hash text not null,
+  is_admin boolean not null default false,
   created_at timestamptz default now()
 );
+
+-- Older setups had an email column. Accounts no longer use email.
+alter table users drop column if exists email;
+alter table users add column if not exists is_admin boolean not null default false;
 
 -- One row per user per liked channel. The primary key stops double likes.
 create table if not exists channel_likes (
@@ -34,4 +38,4 @@ create table if not exists channel_likes (
 );
 
 -- The app talks to these tables with the key in secrets. Keep that key private.
--- If you use the anon key instead, enable row level security and add matching policies.
+-- The admin account (storiizadmin) is created by the app on first start if it is missing.
