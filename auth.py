@@ -7,13 +7,15 @@ Role levels, lowest to highest:
   3 Verified           verified account (is_verified)
   4 Admin              moderation: channels, pinning, bans and verification of lower-level accounts
   5 Super Admin        all admin powers, admin role changes, maintenance mode and announcements
-  6 Main Admin Account storiizadmin: cannot be changed by anyone; only one who appoints Super Admins
+  6 Main Admin Account storiizadmin and theo: root accounts. Neither can be demoted, banned or changed
+                       by anyone else. Root accounts appoint and remove Super Admins.
 
 Passwords are never stored in plain text. Each hash has its own random salt and the format is
 pbkdf2_sha256$iterations$salt_hex$hash_hex.
 
 The admin account is created automatically the first time the app starts if it does not exist.
 The admin password can be overridden with the STORIIZ_ADMIN_PASSWORD environment variable or secret.
+The theo account is created the same way, but only when STORIIZ_THEO_PASSWORD is set. No password is stored in the code.
 """
 
 import hashlib
@@ -30,6 +32,12 @@ MAX_USERNAME = 30
 ADMIN_USERNAME = 'storiizadmin'
 DEFAULT_ADMIN_PASSWORD = 'StorizzAdmin2026!?'
 ADMIN_PASSWORD_ENV = 'STORIIZ_ADMIN_PASSWORD'
+
+THEO_USERNAME = 'theo'
+THEO_PASSWORD_ENV = 'STORIIZ_THEO_PASSWORD'
+
+# Root accounts: highest level, cannot be changed by anyone.
+ROOT_USERNAMES = (ADMIN_USERNAME, THEO_USERNAME)
 
 LEVEL_GUEST = 0
 LEVEL_USER = 1
@@ -78,8 +86,13 @@ def normalize_username(username):
 
 # ---- Levels ----
 
+def is_root_username(username):
+    return normalize_username(username) in ROOT_USERNAMES
+
+
 def is_main_admin(user):
-    return bool(user) and normalize_username(user.get('username')) == ADMIN_USERNAME
+    """True for the root accounts (storiizadmin and theo)."""
+    return bool(user) and is_root_username(user.get('username'))
 
 
 def same_user(a, b):
@@ -128,21 +141,21 @@ def can_manage_site(actor):
 
 
 def can_moderate_user(actor, target):
-    """Ban, unban and verify accounts. Only accounts strictly below the actor's level, never the main account or oneself."""
+    """Ban, unban and verify accounts. Only accounts strictly below the actor's level, never a root account or oneself."""
     if target is None or not is_admin(actor) or same_user(actor, target) or is_main_admin(target):
         return False
     return level_of(actor) > level_of(target)
 
 
 def can_change_admin_role(actor, target):
-    """Make or remove a standard Admin. Super Admins and the main account can be changed only by the main account."""
+    """Make or remove a standard Admin. Super Admins can be changed only by a root account. Root accounts cannot be changed."""
     if target is None or not is_super_admin(actor) or same_user(actor, target) or is_main_admin(target):
         return False
     return not is_super_admin(target) or is_main_admin(actor)
 
 
 def can_set_super_admin(actor, target):
-    """Only the main account appoints or removes Super Admins."""
+    """Only a root account appoints or removes Super Admins. Root accounts cannot be changed."""
     return is_main_admin(actor) and target is not None and not is_main_admin(target)
 
 
@@ -150,7 +163,7 @@ def can_reset_password(actor, target):
     if target is None:
         return False
     if is_main_admin(target):
-        return is_main_admin(actor)
+        return is_main_admin(actor) and same_user(actor, target)
     if same_user(actor, target):
         return is_admin(actor)
     return can_moderate_user(actor, target)
@@ -178,7 +191,7 @@ def validate_signup(username, password, confirm):
     name = normalize_username(username)
     if not _username_ok(name):
         errors.append('Username must be 3 to 30 characters: letters, numbers or underscores.')
-    elif name == ADMIN_USERNAME:
+    elif is_root_username(name):
         errors.append('That username is reserved.')
     errors += _password_errors(password)
     if password != confirm:
@@ -216,18 +229,39 @@ def log_in(backend, username, password):
     }, None
 
 
-def admin_password():
+def _secret_value(name, default=None):
     try:
         import streamlit as st
-        if ADMIN_PASSWORD_ENV in st.secrets:
-            return str(st.secrets[ADMIN_PASSWORD_ENV])
+        if name in st.secrets:
+            return str(st.secrets[name])
     except Exception:
         pass
-    return os.environ.get(ADMIN_PASSWORD_ENV) or DEFAULT_ADMIN_PASSWORD
+    return os.environ.get(name) or default
+
+
+def admin_password():
+    return _secret_value(ADMIN_PASSWORD_ENV, DEFAULT_ADMIN_PASSWORD)
+
+
+def theo_password():
+    """The theo password comes only from a secret or environment variable. None if not set."""
+    return _secret_value(THEO_PASSWORD_ENV)
+
+
+def _ensure_root_flags(backend, username):
+    """Root accounts are admin, super admin, verified and never banned."""
+    user = backend.get_user(username)
+    fixes = {}
+    if not user.get('is_admin'):
+        fixes['is_admin'] = True
+    if user.get('is_banned'):
+        fixes['is_banned'] = False
+    if fixes:
+        backend.update_user(username, fixes)
 
 
 def ensure_admin(backend):
-    """Create the main account if missing and keep its flags correct: admin, not super, not banned."""
+    """Create the root accounts if missing and keep their flags correct."""
     user = backend.get_user(ADMIN_USERNAME)
     if user is None:
         backend.create_user({
@@ -236,16 +270,40 @@ def ensure_admin(backend):
             'is_admin': True,
             'is_super_admin': False,
         })
-        return
-    fixes = {}
-    if not user.get('is_admin'):
-        fixes['is_admin'] = True
-    if user.get('is_super_admin'):
-        fixes['is_super_admin'] = False
-    if user.get('is_banned'):
-        fixes['is_banned'] = False
-    if fixes:
-        backend.update_user(ADMIN_USERNAME, fixes)
+    else:
+        fixes = {}
+        if not user.get('is_admin'):
+            fixes['is_admin'] = True
+        if user.get('is_super_admin'):
+            fixes['is_super_admin'] = False
+        if user.get('is_banned'):
+            fixes['is_banned'] = False
+        if fixes:
+            backend.update_user(ADMIN_USERNAME, fixes)
+
+    password = theo_password()
+    theo = backend.get_user(THEO_USERNAME)
+    if theo is None:
+        if password:
+            backend.create_user({
+                'username': THEO_USERNAME,
+                'password_hash': hash_password(password),
+                'is_admin': True,
+                'is_super_admin': True,
+                'is_verified': True,
+            })
+    else:
+        fixes = {}
+        if not theo.get('is_admin'):
+            fixes['is_admin'] = True
+        if not theo.get('is_super_admin'):
+            fixes['is_super_admin'] = True
+        if not theo.get('is_verified'):
+            fixes['is_verified'] = True
+        if theo.get('is_banned'):
+            fixes['is_banned'] = False
+        if fixes:
+            backend.update_user(THEO_USERNAME, fixes)
 
 
 # ---- Moderation actions. The actor is the logged-in user performing the action. ----
@@ -259,7 +317,7 @@ def _load_target(backend, username):
 
 
 def set_admin_role(backend, actor, username, make_admin):
-    """Make or remove a standard Admin. Only Super Admins and the main account can do this."""
+    """Make or remove a standard Admin. Only Super Admins and root accounts can do this."""
     name, target = _load_target(backend, username)
     if is_main_admin(target):
         raise PermissionError('The Main Admin Account cannot be changed.')
@@ -276,7 +334,7 @@ def set_admin_role(backend, actor, username, make_admin):
 
 
 def set_super_admin(backend, actor, username, make_super):
-    """Appoint or remove a Super Admin. Only the main account can do this.
+    """Appoint or remove a Super Admin. Only a root account can do this.
 
     Removing Super Admin status leaves the account as a standard Admin.
     """
