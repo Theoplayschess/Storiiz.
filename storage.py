@@ -117,10 +117,22 @@ class SQLiteBackend:
             conn.execute(f'INSERT INTO channels ({cols}) VALUES ({marks})', list(row.values()))
             conn.commit()
 
+    def delete_channel(self, channel_id):
+        with closing(self._connect()) as conn:
+            conn.execute('DELETE FROM channel_likes WHERE channel_id = ?', (channel_id,))
+            conn.execute('DELETE FROM channels WHERE id = ?', (channel_id,))
+            conn.commit()
+
     def get_user(self, username):
         with closing(self._connect()) as conn:
             row = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
             return dict(row) if row else None
+
+    def list_users(self):
+        with closing(self._connect()) as conn:
+            rows = conn.execute('SELECT username, is_admin, created_at FROM users ORDER BY created_at').fetchall()
+            return [{'username': r['username'], 'is_admin': bool(r['is_admin']), 'created_at': r['created_at']}
+                    for r in rows]
 
     def create_user(self, data):
         row = {
@@ -184,9 +196,18 @@ class SupabaseBackend:
     def insert_channel(self, row):
         self._table().insert(row).execute()
 
+    def delete_channel(self, channel_id):
+        self._table('channel_likes').delete().eq('channel_id', channel_id).execute()
+        self._table().delete().eq('id', channel_id).execute()
+
     def get_user(self, username):
         rows = self._table('users').select('*').eq('username', username).execute().data or []
         return rows[0] if rows else None
+
+    def list_users(self):
+        rows = self._table('users').select('username,is_admin,created_at').execute().data or []
+        return [{'username': r['username'], 'is_admin': bool(r.get('is_admin')), 'created_at': r.get('created_at')}
+                for r in rows]
 
     def create_user(self, data):
         row = {
