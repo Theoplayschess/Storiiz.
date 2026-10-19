@@ -56,5 +56,43 @@ create table if not exists settings (
   value text
 );
 
+-- Custom roles: coloured badges with an icon. Super Admins and the Main Admin Account create and edit them.
+-- Roles are cosmetic and do not change permissions. icon holds an emoji, an https image link, or a data URL
+-- (PNG, JPEG, WebP, SVG or ICO, at most 256 KB).
+create table if not exists custom_roles (
+  id text primary key,
+  name text not null,
+  color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
+  icon text not null default '',
+  description text not null default '',
+  priority integer not null default 0,
+  created_at timestamptz default now(),
+  created_by text
+);
+create unique index if not exists custom_roles_name_lower on custom_roles (lower(name));
+
+-- Role assignments. A user can hold several roles, at most 250 (enforced by the trigger below).
+create table if not exists user_roles (
+  username text not null references users(username) on delete cascade,
+  role_id text not null references custom_roles(id) on delete cascade,
+  assigned_at timestamptz default now(),
+  assigned_by text,
+  primary key (username, role_id)
+);
+create index if not exists user_roles_role_id on user_roles (role_id);
+
+create or replace function enforce_user_role_cap() returns trigger language plpgsql as $$
+begin
+  if (select count(*) from user_roles where username = new.username) >= 250 then
+    raise exception 'A user can hold at most 250 custom roles';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists user_roles_cap on user_roles;
+create trigger user_roles_cap before insert on user_roles
+  for each row execute function enforce_user_role_cap();
+
 -- The app talks to these tables with the key in secrets. Keep that key private.
 -- The admin account (storiizadmin) is created by the app on first start if it is missing.
