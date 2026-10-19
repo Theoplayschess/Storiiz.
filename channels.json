@@ -1,0 +1,37 @@
+{
+  "channels": [
+    {
+      "id": "puglife",
+      "handle": "@puglife",
+      "name": "Pug Life",
+      "category": "Animals",
+      "avatar": "https://picsum.photos/seed/puglife-avatar/200/200",
+      "image": "https://picsum.photos/seed/puglife-post/800/600",
+      "caption": "Monday energy: this pug has already given up. Sample caption.",
+      "link": "https://whatsapp.com/channel/REPLACE_WITH_REAL_PUGLIFE_INVITE",
+      "base_engagement": 40
+    },
+    {
+      "id": "carlin_muscle",
+      "handle": "@carlin_muscle",
+      "name": "Carlin Muscle",
+      "category": "Fitness",
+      "avatar": "https://picsum.photos/seed/carlin-avatar/200/200",
+      "image": "https://picsum.photos/seed/carlin-post/800/600",
+      "caption": "Five-minute mobility routine you can do before coffee. Sample caption.",
+      "link": "https://whatsapp.com/channel/REPLACE_WITH_REAL_CARLIN_INVITE",
+      "base_engagement": 55
+    },
+    {
+      "id": "daily_recipes",
+      "handle": "@dailyrecipes",
+      "name": "Daily Recipes",
+      "category": "Food",
+      "avatar": "https://picsum.photos/seed/recipes-avatar/200/200",
+      "image": "https://picsum.photos/seed/recipes-post/800/600",
+      "caption": "Three-ingredient dinner that takes ten minutes. Sample caption.",
+      "link": "https://whatsapp.com/channel/REPLACE_WITH_REAL_RECIPES_INVITE",
+      "base_engagement": 30
+    }
+  ]
+}
