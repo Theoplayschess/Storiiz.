@@ -2,6 +2,7 @@ import html
 
 import streamlit as st
 
+import auth
 import storage
 
 st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
@@ -11,7 +12,7 @@ GREEN = '#25D366'
 DARK_BG = '#0B0F0C'
 CARD_BG = '#141A16'
 
-# Pill label -> category filter. 'All' and 'Trending' show everything (Trending is ranked).
+# Pill label -> category filter. Trending shows everything ranked.
 PILLS = {
     '🔥 Trending': None,
     '💪 Fitness': 'Fitness',
@@ -42,6 +43,10 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 .title {{ font-size: 1.5rem; font-weight: 800; margin: 0.9rem 0 0.25rem 0; }}
 .desc {{ font-size: 1.1rem; color: #B9C6BE; line-height: 1.5; margin-bottom: 0.9rem; }}
 .hashtags {{ color: {GREEN}; font-weight: 600; margin-bottom: 0.9rem; }}
+.owner {{ color: #8FA096; font-size: 0.95rem; margin-bottom: 0.6rem; }}
+.badge-admin {{ display: inline-block; background: #F5B301; color: #1A1200; border-radius: 999px;
+  padding: 0.1rem 0.6rem; font-size: 0.8rem; font-weight: 800; margin-left: 0.4rem; vertical-align: middle; }}
+.userline {{ font-weight: 700; font-size: 1.05rem; padding-top: 0.5rem; }}
 .stButton button {{ border-radius: 14px !important; font-weight: 700 !important; font-size: 1.05rem !important;
   background: #1E2B23 !important; color: #F2F5F3 !important; border: 1px solid #2B3A31 !important; min-height: 3.1rem; }}
 .stLinkButton a {{ border-radius: 14px !important; font-weight: 800 !important; font-size: 1.1rem !important;
@@ -64,33 +69,124 @@ def get_backend():
 
 
 def init_state():
+    st.session_state.setdefault('user', None)
     st.session_state.setdefault('liked_ids', set())
     st.session_state.setdefault('visible', PAGE_STEP)
+    st.session_state.setdefault('flash', '')
+
+
+def current_user():
+    return st.session_state.user
+
+
+def load_likes(backend):
+    user = current_user()
+    st.session_state.liked_ids = backend.liked_ids(user['username']) if user else set()
+
+
+def log_out():
+    st.session_state.user = None
+    st.session_state.liked_ids = set()
+    st.session_state.flash = 'You have logged out.'
 
 
 def toggle_like(backend, channel_id):
-    if channel_id in st.session_state.liked_ids:
-        st.session_state.liked_ids.discard(channel_id)
-        backend.add_like(channel_id, -1)
-    else:
+    user = current_user()
+    if not user:
+        return
+    liked = channel_id not in st.session_state.liked_ids
+    backend.set_like(user['username'], channel_id, liked)
+    if liked:
         st.session_state.liked_ids.add(channel_id)
-        backend.add_like(channel_id, 1)
+    else:
+        st.session_state.liked_ids.discard(channel_id)
 
 
-def image_src(value):
-    source = storage.media_source(value)
-    if isinstance(source, bytes):
-        return None
-    return source
+def remove_channel(backend, channel_id):
+    if not auth.is_admin(current_user()):
+        return
+    backend.delete_channel(channel_id)
+    st.session_state.flash = 'Channel removed from the feed.'
+
+
+def do_login(backend, username, password):
+    user = auth.log_in(backend, username, password)
+    if user is None:
+        st.error('Wrong username or password.')
+        return False
+    st.session_state.user = user
+    load_likes(backend)
+    return True
+
+
+def login_form(backend):
+    with st.form('login_form'):
+        username = st.text_input('Username', key='login_username')
+        password = st.text_input('Password', type='password', key='login_password')
+        submitted = st.form_submit_button('Log in')
+    if submitted and do_login(backend, username, password):
+        st.rerun()
+
+
+def signup_form(backend):
+    with st.form('signup_form'):
+        username = st.text_input('Username', help='3 to 30 characters: letters, numbers or underscores.',
+                                 key='signup_username')
+        password = st.text_input('Password', type='password', help='At least 8 characters.',
+                                 key='signup_password')
+        confirm = st.text_input('Confirm password', type='password', key='signup_confirm')
+        submitted = st.form_submit_button('Create account')
+    if not submitted:
+        return
+    errors = auth.validate_signup(username, password, confirm)
+    if errors:
+        for message in errors:
+            st.error(message)
+        return
+    try:
+        auth.sign_up(backend, username, password)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    if do_login(backend, username, password):
+        st.session_state.flash = 'Account created. Welcome to Storiiz!'
+        st.rerun()
+
+
+def account_bar(backend):
+    user = current_user()
+    if user is None:
+        with st.expander('Log in or create an account'):
+            login_tab, signup_tab = st.tabs(['Log in', 'Create account'])
+            with login_tab:
+                login_form(backend)
+            with signup_tab:
+                signup_form(backend)
+        return
+    badge = "<span class='badge-admin'>ADMIN</span>" if user['is_admin'] else ''
+    cols = st.columns([3, 1])
+    with cols[0]:
+        st.markdown(
+            f"<div class='userline'>Logged in as @{html.escape(user['username'])}{badge}</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[1]:
+        st.button('Log out', on_click=log_out, use_container_width=True)
 
 
 def render_card(backend, channel):
+    user = current_user()
+    is_admin = auth.is_admin(user)
     handle = html.escape(channel['handle'])
     title = html.escape(channel.get('name') or channel['handle'])
     desc = html.escape(channel.get('caption') or '')
     category = html.escape(channel.get('category') or '')
-    avatar = image_src(channel.get('avatar') or channel.get('image')) or ''
-    media = image_src(channel.get('image')) or ''
+    owner = channel.get('owner')
+    owner_html = f"<div class='owner'>Submitted by @{html.escape(owner)}</div>" if owner else ''
+    avatar = storage.media_source(channel.get('avatar') or channel.get('image'))
+    media = storage.media_source(channel.get('image'))
+    avatar_src = avatar if isinstance(avatar, str) else ''
+    media_src = media if isinstance(media, str) else ''
     likes = channel.get('likes') or 0
     tags = storage.parse_tags(channel.get('tags'))
     tags_html = f"<div class='hashtags'>{' '.join('#' + html.escape(t) for t in tags)}</div>" if tags else ''
@@ -98,31 +194,45 @@ def render_card(backend, channel):
     st.markdown(f"""
 <div class='card'>
   <div class='card-head'>
-    <img class='avatar' src='{html.escape(avatar)}' alt=''/>
+    <img class='avatar' src='{html.escape(avatar_src)}' alt=''/>
     <div>
       <span class='handle'>{handle}</span><span class='tag'>{category}</span>
     </div>
     <div class='likes-badge'>❤ {likes}</div>
   </div>
-  <img class='media' src='{html.escape(media)}' alt='{title}'/>
+  {owner_html}
+  <img class='media' src='{html.escape(media_src)}' alt='{title}'/>
   <div class='title'>{title}</div>
   <div class='desc'>{desc}</div>
   {tags_html}
 </div>
 """, unsafe_allow_html=True)
 
-    liked = channel['id'] in st.session_state.liked_ids
-    cols = st.columns([1, 2])
+    channel_id = channel['id']
+    liked = channel_id in st.session_state.liked_ids
+    cols = st.columns([1, 2, 1]) if is_admin else st.columns([1, 2])
     with cols[0]:
-        st.button(
-            ('❤️ Liked' if liked else '🤍 Like'),
-            key=f"like_{channel['id']}",
-            on_click=toggle_like,
-            args=(backend, channel['id']),
-            use_container_width=True,
-        )
+        if user:
+            st.button(
+                '❤️ Liked' if liked else '🤍 Like',
+                key=f'like_{channel_id}',
+                on_click=toggle_like,
+                args=(backend, channel_id),
+                use_container_width=True,
+            )
+        else:
+            st.button('🤍 Log in to like', key=f'like_{channel_id}', disabled=True, use_container_width=True)
     with cols[1]:
         st.link_button('Join WhatsApp Channel  →', channel['link'], use_container_width=True)
+    if is_admin:
+        with cols[2]:
+            st.button(
+                '🗑 Remove',
+                key=f'remove_{channel_id}',
+                on_click=remove_channel,
+                args=(backend, channel_id),
+                use_container_width=True,
+            )
     st.write('')
 
 
@@ -131,12 +241,11 @@ def matches(channel, query, category):
         return False
     if not query:
         return True
-    q = query.lower()
     haystack = ' '.join([
         channel.get('handle') or '', channel.get('name') or '',
         channel.get('caption') or '', channel.get('tags') or '',
     ]).lower()
-    return q in haystack
+    return query.lower() in haystack
 
 
 def feed_view(backend, query, pill):
@@ -161,6 +270,10 @@ def feed_view(backend, query, pill):
 
 
 def submit_view(backend):
+    user = current_user()
+    if not user:
+        st.info('Log in or create an account above to submit a channel.')
+        return
     st.write('Share your WhatsApp Channel with the Storiiz community. New channels appear in the feed right away.')
     with st.form('submit_channel', clear_on_submit=True):
         handle = st.text_input('Handle', placeholder='@yourchannel')
@@ -197,6 +310,7 @@ def submit_view(backend):
         'avatar': avatar_url.strip(),
         'link': link.strip(),
         'tags': tags,
+        'owner': user['username'],
     }
     errors += storage.validate_submission(data)
     if errors:
@@ -212,6 +326,45 @@ def submit_view(backend):
     st.success(f"Thanks! {data['handle']} is now live in the feed (id: {channel_id}).")
 
 
+def admin_view(backend):
+    channels = backend.list_channels()
+    users = backend.list_users()
+    st.subheader('Stats')
+    cols = st.columns(4)
+    cols[0].metric('Users', len(users))
+    cols[1].metric('Channels', len(channels))
+    cols[2].metric('Total likes', sum((c.get('likes') or 0) for c in channels))
+    cols[3].metric('Admins', sum(1 for u in users if u.get('is_admin')))
+
+    st.subheader('Channels')
+    if not channels:
+        st.info('No channels.')
+    for channel in sorted(channels, key=lambda c: c.get('created_at') or '', reverse=True):
+        cols = st.columns([3, 2, 1, 2])
+        with cols[0]:
+            st.markdown(f"**{channel['handle']}**")
+            st.caption(channel.get('name') or '')
+        with cols[1]:
+            st.caption(f"{channel.get('category') or ''} | by @{channel.get('owner') or 'sample'}")
+        with cols[2]:
+            st.write(f"❤ {channel.get('likes') or 0}")
+        with cols[3]:
+            st.button(
+                'Remove',
+                key=f"admin_remove_{channel['id']}",
+                on_click=remove_channel,
+                args=(backend, channel['id']),
+                use_container_width=True,
+            )
+
+    st.subheader('Users')
+    st.dataframe(
+        [{'username': u['username'], 'admin': bool(u.get('is_admin')),
+          'joined': str(u.get('created_at') or '')[:10]} for u in users],
+        use_container_width=True,
+    )
+
+
 def main():
     init_state()
     st.markdown(CSS, unsafe_allow_html=True)
@@ -221,8 +374,15 @@ def main():
         st.sidebar.warning(backend.note)
 
     st.markdown("<div class='brand'>STORIIZ<span>.</span></div>", unsafe_allow_html=True)
-    feed_tab, submit_tab = st.tabs(['Feed', 'Submit a channel'])
-    with feed_tab:
+    if st.session_state.flash:
+        st.success(st.session_state.flash)
+        st.session_state.flash = ''
+    account_bar(backend)
+
+    user = current_user()
+    names = ['Feed', 'Submit a channel'] + (['Admin Panel'] if auth.is_admin(user) else [])
+    tabs = st.tabs(names)
+    with tabs[0]:
         query = st.text_input('Search', placeholder='Search channels...', label_visibility='collapsed')
         pill = st.radio('Category', list(PILLS.keys()), horizontal=True, label_visibility='collapsed')
         if query != st.session_state.get('last_query') or pill != st.session_state.get('last_pill'):
@@ -230,8 +390,11 @@ def main():
             st.session_state.last_query = query
             st.session_state.last_pill = pill
         feed_view(backend, query.strip(), pill)
-    with submit_tab:
+    with tabs[1]:
         submit_view(backend)
+    if len(tabs) > 2:
+        with tabs[2]:
+            admin_view(backend)
 
 
 main()
