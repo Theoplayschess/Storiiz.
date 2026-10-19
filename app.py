@@ -108,10 +108,6 @@ def level_badge(level):
     return f"<span class='lvl {css}'>{html.escape(label)}</span>"
 
 
-def owner_names(backend):
-    return {c.get('owner') for c in backend.list_channels() if c.get('owner')}
-
-
 def member_level(member, owners):
     return auth.level_of(member, owns_channel=member['username'] in owners)
 
@@ -150,7 +146,7 @@ def notify(kind, text):
 
 def session_user(backend, fresh):
     """Build the session record from a stored account, including whether it owns a channel."""
-    owns = fresh['username'] in owner_names(backend)
+    owns = fresh['username'] in {c.get('owner') for c in backend.list_channels() if c.get('owner')}
     return {
         'username': fresh['username'],
         'is_admin': bool(fresh.get('is_admin')),
@@ -268,7 +264,7 @@ def toggle_like(backend, channel_id):
 
 
 def remove_channel(backend, channel_id):
-    if not auth.can_moderate_channels(current_user() and auth.level_of(current_user(), owns_channel=True)) and not is_admin_user():
+    if not is_admin_user():
         return
     backend.delete_channel(channel_id)
     notify('success', 'Channel removed from the feed.')
@@ -674,7 +670,7 @@ def admin_view(backend):
                 actions.append(('Demote to user', 'role', [backend, name, False]))
             else:
                 actions.append(('Make admin', 'role', [backend, name, True]))
-        if auth.can_set_super_admin(user, member) and super_user:
+        if super_user and auth.can_set_super_admin(user, member):
             if member['is_super_admin']:
                 actions.append(('Remove Super Admin', 'super', [backend, name, False]))
             else:
