@@ -1,4 +1,4 @@
-"""Accounts for Storiiz: username and password only, PBKDF2-SHA256 hashing, and a seeded admin.
+"""Accounts for Storiiz: username and password only, PBKDF2-SHA256 hashing, roles and moderation.
 
 Passwords are never stored in plain text. Each hash has its own random salt and the format is
 pbkdf2_sha256$iterations$salt_hex$hash_hex.
@@ -46,11 +46,23 @@ def normalize_username(username):
     return (username or '').strip().lower()
 
 
+def is_admin(user):
+    return bool(user and user.get('is_admin'))
+
+
 def _username_ok(username):
     return (
         MIN_USERNAME <= len(username) <= MAX_USERNAME
         and all(ch.isascii() and (ch.isalnum() or ch == '_') for ch in username)
     )
+
+
+def _password_errors(password):
+    if len(password or '') < MIN_PASSWORD:
+        return [f'Password must be at least {MIN_PASSWORD} characters.']
+    if len(password) > MAX_PASSWORD:
+        return [f'Password must be {MAX_PASSWORD} characters or fewer.']
+    return []
 
 
 def validate_signup(username, password, confirm):
@@ -60,10 +72,7 @@ def validate_signup(username, password, confirm):
         errors.append('Username must be 3 to 30 characters: letters, numbers or underscores.')
     elif name == ADMIN_USERNAME:
         errors.append('That username is reserved.')
-    if len(password or '') < MIN_PASSWORD:
-        errors.append(f'Password must be at least {MIN_PASSWORD} characters.')
-    elif len(password) > MAX_PASSWORD:
-        errors.append(f'Password must be {MAX_PASSWORD} characters or fewer.')
+    errors += _password_errors(password)
     if password != confirm:
         errors.append('The passwords do not match.')
     return errors
@@ -83,12 +92,18 @@ def sign_up(backend, username, password):
 
 
 def log_in(backend, username, password):
-    """Return the user dict on success, or None if the credentials are wrong."""
+    """Return (user, None) on success or (None, message) on failure."""
     name = normalize_username(username)
     user = backend.get_user(name) if name else None
     if user is None or not verify_password(password or '', user['password_hash']):
-        return None
-    return {'username': user['username'], 'is_admin': bool(user.get('is_admin'))}
+        return None, 'Wrong username or password.'
+    if user.get('is_banned'):
+        return None, 'This account has been suspended. Contact the Storiiz admins.'
+    return {
+        'username': user['username'],
+        'is_admin': bool(user.get('is_admin')),
+        'is_verified': bool(user.get('is_verified')),
+    }, None
 
 
 def admin_password():
@@ -111,8 +126,60 @@ def ensure_admin(backend):
             'is_admin': True,
         })
     elif not user.get('is_admin'):
-        backend.set_admin(ADMIN_USERNAME, True)
+        backend.update_user(ADMIN_USERNAME, {'is_admin': True})
 
 
-def is_admin(user):
-    return bool(user and user.get('is_admin'))
+# ---- Moderation actions. The actor is the logged-in user performing the action. ----
+
+def _require_admin(actor):
+    if not is_admin(actor):
+        raise PermissionError('Admin rights are required for that.')
+
+
+def _target(backend, username):
+    name = normalize_username(username)
+    user = backend.get_user(name)
+    if user is None:
+        raise ValueError('That user does not exist.')
+    return name, user
+
+
+def set_admin_role(backend, actor, username, make_admin):
+    """Promote or demote a user. storiizadmin cannot be demoted and no one can demote themselves."""
+    _require_admin(actor)
+    name, _ = _target(backend, username)
+    if not make_admin:
+        if name == ADMIN_USERNAME:
+            raise ValueError('The storiizadmin account cannot be demoted.')
+        if name == actor['username']:
+            raise ValueError('You cannot demote your own account.')
+    backend.update_user(name, {'is_admin': bool(make_admin)})
+
+
+def set_verified(backend, actor, username, verified):
+    _require_admin(actor)
+    name, _ = _target(backend, username)
+    backend.update_user(name, {'is_verified': bool(verified)})
+
+
+def set_banned(backend, actor, username, banned):
+    """Freeze or unfreeze an account. Admins cannot be banned, and nobody can ban themselves."""
+    _require_admin(actor)
+    name, user = _target(backend, username)
+    if banned:
+        if name == actor['username']:
+            raise ValueError('You cannot ban your own account.')
+        if user.get('is_admin'):
+            raise ValueError('Demote this admin before banning the account.')
+    backend.update_user(name, {'is_banned': bool(banned)})
+
+
+def reset_password(backend, actor, username, new_password):
+    _require_admin(actor)
+    name, _ = _target(backend, username)
+    if name == ADMIN_USERNAME and actor['username'] != ADMIN_USERNAME:
+        raise ValueError('Only storiizadmin can reset its own password.')
+    errors = _password_errors(new_password)
+    if errors:
+        raise ValueError(errors[0])
+    backend.update_user(name, {'password_hash': hash_password(new_password)})
