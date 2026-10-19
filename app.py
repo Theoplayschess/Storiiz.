@@ -59,6 +59,9 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   border-radius: 24px; margin: 2rem 0; }}
 .barrier h1 {{ font-size: 2.2rem !important; color: {GREEN}; }}
 .barrier p {{ font-size: 1.2rem; color: #B9C6BE; }}
+.announce-cta a {{ border-radius: 12px !important; font-weight: 800 !important; background: {GREEN} !important;
+  color: #04130A !important; border: none !important; min-height: 2.8rem; display: flex; align-items: center;
+  justify-content: center; text-decoration: none; }}
 .stButton button {{ border-radius: 14px !important; font-weight: 700 !important; font-size: 1.05rem !important;
   background: #1E2B23 !important; color: #F2F5F3 !important; border: 1px solid #2B3A31 !important; min-height: 3.1rem; }}
 .stLinkButton a {{ border-radius: 14px !important; font-weight: 800 !important; font-size: 1.1rem !important;
@@ -437,8 +440,19 @@ def act_add_announcement(backend):
         return
     amount = int(st.session_state.get('ann_amount', 24))
     hours = amount * (24 if st.session_state.get('ann_unit') == 'Days' else 1)
-    storage.add_announcement(backend, message, st.session_state.get('ann_kind', 'Info'), hours)
+    try:
+        storage.add_announcement(
+            backend,
+            message,
+            st.session_state.get('ann_kind', 'Info'),
+            hours,
+            link=st.session_state.get('ann_link', ''),
+        )
+    except ValueError as exc:
+        notify('error', str(exc))
+        return
     st.session_state['ann_message'] = ''
+    st.session_state['ann_link'] = ''
     notify('success', 'Announcement published.')
 
 
@@ -485,7 +499,11 @@ def admin_view(backend):
 
     st.subheader('Announcements')
     with st.form('announcement_form', clear_on_submit=False):
-        st.text_input('Message', max_chars=storage.MAX_ANNOUNCEMENT, key='ann_message')
+        st.text_input('Message', max_chars=storage.MAX_ANNOUNCEMENT, key='ann_message',
+                      help='Any http or https link pasted here becomes the button link if the field below is empty.')
+        st.text_input('Button link (optional)', max_chars=storage.MAX_LINK, key='ann_link',
+                      placeholder='https://whatsapp.com/channel/... or @channelhandle',
+                      help='A WhatsApp channel URL, another https link, or a Storiiz @handle.')
         cols = st.columns(3)
         with cols[0]:
             st.selectbox('Style', storage.ANNOUNCEMENT_KINDS, key='ann_kind')
@@ -506,7 +524,8 @@ def admin_view(backend):
         cols = st.columns([4, 1, 1])
         with cols[0]:
             st.markdown(f"**{html.escape(item.get('message', ''))}**")
-            st.caption(f"{item.get('kind')} | {status} | expires {when}")
+            link_note = f" | link: {html.escape(item['link'])}" if item.get('link') else ''
+            st.caption(f"{item.get('kind')} | {status} | expires {when}{link_note}")
         with cols[1]:
             if item.get('active'):
                 st.button('Turn off', key=f"ann_off_{item['id']}", on_click=act_set_announcement,
@@ -632,7 +651,8 @@ def announcement_banners(backend):
             continue
         text = html.escape(item.get('message', ''))
         kind = item.get('kind')
-        cols = st.columns([9, 1])
+        cta = storage.announcement_cta(backend, item)
+        cols = st.columns([6, 3, 1]) if cta else st.columns([9, 1])
         with cols[0]:
             if kind == 'Warning':
                 st.warning(text)
@@ -640,7 +660,13 @@ def announcement_banners(backend):
                 st.success(text)
             else:
                 st.info(text)
-        with cols[1]:
+        if cta:
+            url, label = cta
+            with cols[1]:
+                st.markdown("<div class='announce-cta'>", unsafe_allow_html=True)
+                st.link_button(label, url, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+        with cols[-1]:
             if st.button('✕', key=f"dismiss_{item['id']}", help='Dismiss'):
                 st.session_state.dismissed.add(item['id'])
                 st.rerun()
@@ -693,5 +719,4 @@ def main():
             admin_view(backend)
 
 
-st.markdown(CSS, unsafe_allow_html=True)
 main()
