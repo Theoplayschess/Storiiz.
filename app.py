@@ -13,6 +13,7 @@ from i18n import t
 st.set_page_config(page_title='Storiiz', page_icon='💬', layout='centered')
 
 PAGE_STEP = 8
+VIDEO_LIMIT = 30
 GREEN = '#25D366'
 INK = '#EDF1EE'
 MUTED = '#8C9A92'
@@ -22,16 +23,12 @@ SURFACE = '#121813'
 LINE = '#1E2820'
 VERIFIED_BLUE = '#4DA3F5'
 
-# Pill translation key -> stored category filter. Trending shows everything ranked.
-PILLS = {
-    'pill.trending': None,
-    'pill.fitness': 'Fitness',
-    'pill.news': 'News',
-    'pill.gaming': 'Entertainment',
-    'pill.cooking': 'Food',
-    'pill.pets': 'Animals',
-    'pill.tech': 'Tech',
-}
+DOCK_ITEMS = [
+    ('video', 'Vidéo'),
+    ('photo', 'Photo'),
+    ('post', 'Poster'),
+    ('settings', 'Paramètres'),
+]
 
 # Level -> (CSS class, translation key) for the role badge.
 LEVEL_BADGES = {
@@ -47,25 +44,43 @@ LEVEL_BADGES = {
 CSS = f'''
 <style>
 .stApp {{ background: {PAGE_BG}; color: {INK}; }}
-.block-container {{ max-width: 680px; padding-top: 2.2rem; padding-bottom: 5rem; }}
+.block-container {{ max-width: 680px; padding-top: 1.6rem; padding-bottom: 7.5rem; }}
 header[data-testid="stHeader"] {{ background: transparent; }}
 [data-testid="stSidebar"] {{ display: none; }}
 
-.brand {{ font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: {INK};
-  margin-bottom: 1.6rem; }}
+.brand {{ font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: {INK}; margin-bottom: 1rem; }}
 .brand span {{ color: {GREEN}; }}
+
+.snap {{ height: calc(100vh - 230px); min-height: 360px; overflow-y: auto; scroll-snap-type: y mandatory;
+  border-radius: 18px; border: 1px solid {LINE}; background: {SURFACE}; overscroll-behavior: contain; }}
+.slide {{ position: relative; height: 100%; min-height: 360px; scroll-snap-align: start; scroll-snap-stop: always;
+  overflow: hidden; }}
+.slide-img {{ position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }}
+.slide-shade {{ position: absolute; inset: 0; background: linear-gradient(to top, rgba(7,10,8,0.95) 0%, rgba(7,10,8,0.35) 45%, rgba(7,10,8,0) 70%); }}
+.slide-info {{ position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2rem 1.2rem 1.3rem 1.2rem; }}
+.slide-handle {{ font-size: 0.95rem; font-weight: 600; color: {INK}; }}
+.slide-title {{ font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; color: {INK}; margin: 0.25rem 0 0.35rem 0; }}
+.slide-desc {{ font-size: 0.95rem; color: {SOFT}; line-height: 1.5; margin-bottom: 0.6rem; }}
+.slide-meta {{ font-size: 0.8rem; color: {MUTED}; margin-bottom: 0.8rem; }}
+.join {{ display: inline-block; background: {GREEN}; color: #05130A !important; font-weight: 600; font-size: 0.92rem;
+  border-radius: 10px; padding: 0.55rem 1rem; text-decoration: none !important; }}
+.snap-end {{ text-align: center; color: {MUTED}; font-size: 0.85rem; padding: 0.8rem 0 0.2rem 0; }}
+
+.photo-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }}
+.photo-tile {{ position: relative; border-radius: 14px; overflow: hidden; border: 1px solid {LINE}; aspect-ratio: 1 / 1;
+  background: {SURFACE}; display: block; }}
+.photo-tile img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+.photo-tile .photo-label {{ position: absolute; left: 0; right: 0; bottom: 0; padding: 0.5rem 0.6rem;
+  background: linear-gradient(to top, rgba(7,10,8,0.9), rgba(7,10,8,0)); color: {INK}; font-size: 0.85rem; font-weight: 600; }}
 
 .card {{ background: {SURFACE}; border: 1px solid {LINE}; border-radius: 18px;
   padding: 1.25rem 1.3rem 1rem 1.3rem; margin-bottom: 1rem; }}
 .card-head {{ display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.9rem; }}
 .avatar {{ width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 1px solid {LINE}; }}
 .handle {{ font-size: 1.05rem; font-weight: 600; color: {INK}; }}
-.tag {{ display: inline-block; color: {MUTED}; font-size: 0.8rem; font-weight: 500;
-  margin-left: 0.5rem; }}
-.verified {{ display: inline-block; color: {VERIFIED_BLUE}; font-size: 0.8rem; font-weight: 600;
-  margin-left: 0.5rem; }}
-.pinned {{ display: inline-block; color: #D9A52B; font-size: 0.8rem; font-weight: 600;
-  margin-left: 0.5rem; }}
+.tag {{ display: inline-block; color: {MUTED}; font-size: 0.8rem; font-weight: 500; margin-left: 0.5rem; }}
+.verified {{ display: inline-block; color: {VERIFIED_BLUE}; font-size: 0.8rem; font-weight: 600; margin-left: 0.5rem; }}
+.pinned {{ display: inline-block; color: #D9A52B; font-size: 0.8rem; font-weight: 600; margin-left: 0.5rem; }}
 .likes-badge {{ margin-left: auto; color: {MUTED}; font-size: 0.9rem; font-weight: 500; white-space: nowrap; }}
 .media {{ width: 100%; border-radius: 12px; display: block; max-height: 480px; object-fit: cover; }}
 .title {{ font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 1rem 0 0.3rem 0; color: {INK}; }}
@@ -108,14 +123,19 @@ header[data-testid="stHeader"] {{ background: transparent; }}
   border-radius: 10px !important; border: 1px solid {LINE} !important; font-size: 0.98rem; }}
 .stTextInput input:focus, .stTextArea textarea:focus {{ border-color: #2F4A39 !important; box-shadow: none !important; }}
 
-div[role="radiogroup"] {{ gap: 0.4rem; flex-wrap: wrap; }}
-div[role="radiogroup"] label {{ background: transparent; border: 1px solid {LINE}; border-radius: 999px;
-  padding: 0.25rem 0.8rem; }}
-div[role="radiogroup"] label:has(input:checked) {{ background: #16241B; border-color: #2F4A39; }}
-div[role="radiogroup"] label p {{ font-weight: 500; font-size: 0.9rem; color: {SOFT}; }}
-div[role="radiogroup"] label:has(input:checked) p {{ color: {INK}; }}
-
 h2, h3 {{ font-weight: 600 !important; letter-spacing: -0.01em; }}
+
+/* Bottom dock: the row that contains the marker becomes a fixed bar at the bottom of the screen */
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) {{ position: fixed; bottom: 0; left: 0; right: 0; max-width: 680px;
+  margin: 0 auto; z-index: 999; background: rgba(11,15,12,0.94); backdrop-filter: blur(12px);
+  border-top: 1px solid {LINE}; padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom)) 0.6rem;
+  gap: 0.4rem; flex-wrap: nowrap !important; }}
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) > div {{ min-width: 0 !important; flex: 1 1 0 !important;
+  width: auto !important; }}
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button {{ min-height: 2.9rem; font-size: 0.9rem !important; }}
+div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button[kind="primary"] {{ background: {GREEN} !important;
+  color: #05130A !important; border-color: {GREEN} !important; }}
+.dock-marker {{ display: none; }}
 </style>
 '''
 
@@ -173,6 +193,11 @@ def init_state():
     st.session_state.setdefault('liked_ids', set())
     st.session_state.setdefault('visible', PAGE_STEP)
     st.session_state.setdefault('dismissed', set())
+    st.session_state.setdefault('view', 'video')
+
+
+def set_view(name):
+    st.session_state.view = name
 
 
 def notify(kind, text):
@@ -381,9 +406,7 @@ def render_card(backend, channel, role_lookup=None):
     st.write('')
 
 
-def matches(channel, query, category):
-    if category and channel.get('category') != category:
-        return False
+def matches(channel, query):
     if not query:
         return True
     haystack = ' '.join([
@@ -393,20 +416,76 @@ def matches(channel, query, category):
     return query.lower() in haystack
 
 
-def feed_view(backend, query, pill):
+def ranked_queue(backend, query):
     channels = backend.list_channels()
-    if not channels:
+    return [c for c in storage.ranked(channels) if matches(c, query)]
+
+
+def slide_html(channel):
+    """One full-height slide for the vertical snap feed. Kept on a single line to avoid markdown indentation issues."""
+    handle = html.escape(channel.get('handle') or '')
+    title = html.escape(channel.get('name') or channel.get('handle') or '')
+    desc = html.escape(channel.get('caption') or '')
+    category = html.escape(category_label(channel.get('category')))
+    media = html.escape(image_src(channel.get('image')), quote=True)
+    link = html.escape(channel.get('link') or '#', quote=True)
+    likes = channel.get('likes') or 0
+    join = html.escape(t('card.join'))
+    return (
+        f"<section class='slide'>"
+        f"<img class='slide-img' src='{media}' alt=''/>"
+        f"<div class='slide-shade'></div>"
+        f"<div class='slide-info'>"
+        f"<div class='slide-handle'>{handle}</div>"
+        f"<div class='slide-title'>{title}</div>"
+        f"<div class='slide-desc'>{desc}</div>"
+        f"<div class='slide-meta'>{category} &middot; {likes}</div>"
+        f"<a class='join' href='{link}' target='_blank' rel='noopener'>{join}</a>"
+        f"</div>"
+        f"</section>"
+    )
+
+
+def video_view(backend):
+    """Vertical snap-scroll feed of channels, Shorts/TikTok style."""
+    query = st.text_input(t('search.label'), placeholder=t('search.placeholder'), label_visibility='collapsed',
+                          key='video_query')
+    queue = ranked_queue(backend, query.strip())
+    if not queue:
+        st.info(t('feed.empty') if not backend.list_channels() else t('feed.no_match'))
+        return
+    visible = min(st.session_state.visible, VIDEO_LIMIT)
+    slides = ''.join(slide_html(c) for c in queue[:visible])
+    st.markdown(f"<div class='snap'>{slides}</div>", unsafe_allow_html=True)
+    if visible < len(queue) and visible < VIDEO_LIMIT:
+        if st.button(t('feed.load_more', n=min(PAGE_STEP, len(queue) - visible)), use_container_width=True):
+            st.session_state.visible = visible + PAGE_STEP
+            st.rerun()
+    else:
+        st.markdown(f"<div class='snap-end'>{html.escape(t('feed.end'))}</div>", unsafe_allow_html=True)
+
+
+def photo_tile(channel):
+    src = html.escape(image_src(channel.get('image')), quote=True)
+    link = html.escape(channel.get('link') or '#', quote=True)
+    label = html.escape(channel.get('name') or channel.get('handle') or '')
+    return (
+        f"<a class='photo-tile' href='{link}' target='_blank' rel='noopener'>"
+        f"<img src='{src}' alt=''/>"
+        f"<div class='photo-label'>{label}</div>"
+        f"</a>"
+    )
+
+
+def photo_view(backend):
+    """Grid of channel images (photos and meme reposts)."""
+    queue = [c for c in ranked_queue(backend, '') if image_src(c.get('image'))]
+    if not queue:
         st.info(t('feed.empty'))
         return
-    category = PILLS[pill]
-    queue = [c for c in storage.ranked(channels) if matches(c, query, category)]
-    if not queue:
-        st.info(t('feed.no_match'))
-        return
     visible = st.session_state.visible
-    role_lookup = storage.role_map(backend)
-    for channel in queue[:visible]:
-        render_card(backend, channel, role_lookup)
+    tiles = ''.join(photo_tile(c) for c in queue[:visible])
+    st.markdown(f"<div class='photo-grid'>{tiles}</div>", unsafe_allow_html=True)
     if visible < len(queue):
         if st.button(t('feed.load_more', n=len(queue) - visible), use_container_width=True):
             st.session_state.visible = visible + PAGE_STEP
@@ -802,6 +881,34 @@ def announcement_banners(backend):
                 st.rerun()
 
 
+def bottom_dock():
+    """Fixed bottom navigation. The active item is shown as a primary button."""
+    cols = st.columns(len(DOCK_ITEMS))
+    for col, (name, label) in zip(cols, DOCK_ITEMS):
+        with col:
+            if name == 'video':
+                st.markdown("<span class='dock-marker'></span>", unsafe_allow_html=True)
+            active = st.session_state.view == name
+            st.button(
+                label,
+                key=f'nav_{name}',
+                on_click=set_view,
+                args=(name,),
+                type='primary' if active else 'secondary',
+                use_container_width=True,
+            )
+
+
+def settings_view(backend):
+    st.subheader(t('auth.title'))
+    account_bar(backend)
+    st.subheader(t('tab.settings') if t('tab.settings') != 'tab.settings' else 'Paramètres')
+    i18n.language_toggle()
+    if is_admin_user():
+        st.divider()
+        admin_view(backend)
+
+
 def main():
     init_state()
     st.markdown(CSS, unsafe_allow_html=True)
@@ -809,11 +916,7 @@ def main():
     backend = get_backend()
     refresh_user(backend)
 
-    top = st.columns([3, 2])
-    with top[0]:
-        st.markdown("<div class='brand'>Storiiz<span>.</span></div>", unsafe_allow_html=True)
-    with top[1]:
-        i18n.language_toggle()
+    st.markdown("<div class='brand'>Storiiz<span>.</span></div>", unsafe_allow_html=True)
 
     notice = st.session_state.pop('notice', None)
     if notice:
@@ -825,27 +928,21 @@ def main():
         maintenance_barrier(backend, maint['message'])
         st.stop()
 
-    account_bar(backend)
     if maint['enabled']:
         st.markdown(f"<div class='maint-banner'>{html.escape(t('maint.banner'))}</div>", unsafe_allow_html=True)
     announcement_banners(backend)
 
-    names = [t('tab.feed'), t('tab.submit')] + ([t('tab.admin')] if is_admin_user() else [])
-    tabs = st.tabs(names)
-    with tabs[0]:
-        query = st.text_input(t('search.label'), placeholder=t('search.placeholder'), label_visibility='collapsed')
-        pill = st.radio(t('category.label'), list(PILLS.keys()), horizontal=True, label_visibility='collapsed',
-                        format_func=t)
-        if query != st.session_state.get('last_query') or pill != st.session_state.get('last_pill'):
-            st.session_state.visible = PAGE_STEP
-            st.session_state.last_query = query
-            st.session_state.last_pill = pill
-        feed_view(backend, query.strip(), pill)
-    with tabs[1]:
+    view = st.session_state.view
+    if view == 'photo':
+        photo_view(backend)
+    elif view == 'post':
         submit_view(backend)
-    if len(tabs) > 2:
-        with tabs[2]:
-            admin_view(backend)
+    elif view == 'settings':
+        settings_view(backend)
+    else:
+        video_view(backend)
+
+    bottom_dock()
 
 
 main()
