@@ -94,5 +94,19 @@ drop trigger if exists user_roles_cap on user_roles;
 create trigger user_roles_cap before insert on user_roles
   for each row execute function enforce_user_role_cap();
 
+-- Posts published by channel owners (text, image or video) shown with their channel.
+-- content_type is one of 'text', 'image', 'video'. likes_count is kept in step with post_likes.
+create table if not exists channel_posts (
+  id text primary key,
+  channel_id text not null references channels(id) on delete cascade,
+  author_id text not null,
+  content_type text not null default 'text' check (content_type in ('text', 'image', 'video')),
+  content text not null default '',
+  media_url text not null default '',
+  created_at timestamptz default now(),
+  likes_count integer not null default 0
+);
+create index if not exists channel_posts_channel_id on channel_posts (channel_id, created_at desc);
+
 -- The app talks to these tables with the key in secrets. Keep that key private.
 -- The admin account (storiizadmin) is created by the app on first start if it is missing.
