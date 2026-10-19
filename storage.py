@@ -1,8 +1,8 @@
-"""Storage, validation and ranking for Storiiz.
+"""Storage, validation, ranking, moderation settings and backups for Storiiz.
 
 Uses Supabase when SUPABASE_URL and SUPABASE_KEY are set (st.secrets or environment variables).
 Otherwise uses a local SQLite database that is created automatically in data/storiiz.db.
-The admin account is ensured on every backend start.
+The admin account is ensured on every backend start. Older SQLite files get new columns automatically.
 """
 
 import base64
@@ -11,7 +11,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import auth
@@ -25,6 +25,10 @@ ALLOWED_IMAGE_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 CATEGORIES = ['General', 'Animals', 'Fitness', 'Food', 'News', 'Tech', 'Entertainment', 'Other']
 WHATSAPP_PREFIXES = ('https://whatsapp.com/channel/', 'https://www.whatsapp.com/channel/')
 MAX_CAPTION = 280
+MAX_MAINTENANCE = 300
+MAX_ANNOUNCEMENT = 200
+ANNOUNCEMENT_KINDS = ['Info', 'Warning', 'Success']
+DEFAULT_MAINTENANCE_MESSAGE = "Storiiz is under maintenance. We'll be back shortly."
 
 LIKE_WEIGHT = 3          # each like counts as 3 points of engagement
 NEW_BOOST_MAX = 20.0     # newly added channels get up to 20 extra points...
@@ -44,7 +48,9 @@ CREATE TABLE IF NOT EXISTS channels (
     base_engagement INTEGER DEFAULT 0,
     likes INTEGER DEFAULT 0,
     created_at TEXT,
-    owner TEXT
+    owner TEXT,
+    is_verified INTEGER NOT NULL DEFAULT 0,
+    is_pinned INTEGER NOT NULL DEFAULT 0
 )
 '''
 
@@ -53,6 +59,8 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    is_verified INTEGER NOT NULL DEFAULT 0,
+    is_banned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT
 )
 '''
@@ -66,9 +74,28 @@ CREATE TABLE IF NOT EXISTS channel_likes (
 )
 '''
 
+CREATE_SETTINGS_TABLE = '''
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+)
+'''
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_time(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _secret(name):
@@ -79,6 +106,28 @@ def _secret(name):
     except Exception:
         pass
     return os.environ.get(name)
+
+
+def _add_missing_columns(conn, table, columns):
+    existing = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}')
+
+
+def _user_out(row):
+    """Public view of a user. Never includes the password hash."""
+    return {
+        'username': row['username'],
+        'is_admin': bool(row.get('is_admin')),
+        'is_verified': bool(row.get('is_verified')),
+        'is_banned': bool(row.get('is_banned')),
+        'created_at': row.get('created_at'),
+    }
+
+
+def _sqlite_flags(fields):
+    return {k: (int(v) if isinstance(v, bool) else v) for k, v in fields.items()}
 
 
 class SQLiteBackend:
@@ -92,13 +141,17 @@ class SQLiteBackend:
             conn.execute(CREATE_SQLITE_TABLE)
             conn.execute(CREATE_USERS_TABLE)
             conn.execute(CREATE_LIKES_TABLE)
-            # Migrate older databases: add the owner column and the is_admin flag if missing.
-            channel_cols = {row['name'] for row in conn.execute('PRAGMA table_info(channels)')}
-            if 'owner' not in channel_cols:
-                conn.execute('ALTER TABLE channels ADD COLUMN owner TEXT')
-            user_cols = {row['name'] for row in conn.execute('PRAGMA table_info(users)')}
-            if 'is_admin' not in user_cols:
-                conn.execute('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
+            conn.execute(CREATE_SETTINGS_TABLE)
+            _add_missing_columns(conn, 'channels', {
+                'owner': 'TEXT',
+                'is_verified': 'INTEGER NOT NULL DEFAULT 0',
+                'is_pinned': 'INTEGER NOT NULL DEFAULT 0',
+            })
+            _add_missing_columns(conn, 'users', {
+                'is_admin': 'INTEGER NOT NULL DEFAULT 0',
+                'is_verified': 'INTEGER NOT NULL DEFAULT 0',
+                'is_banned': 'INTEGER NOT NULL DEFAULT 0',
+            })
             conn.commit()
 
     def _connect(self):
@@ -111,10 +164,20 @@ class SQLiteBackend:
             return [dict(row) for row in conn.execute('SELECT * FROM channels').fetchall()]
 
     def insert_channel(self, row):
+        row = _sqlite_flags(row)
         cols = ', '.join(row.keys())
         marks = ', '.join('?' for _ in row)
         with closing(self._connect()) as conn:
             conn.execute(f'INSERT INTO channels ({cols}) VALUES ({marks})', list(row.values()))
+            conn.commit()
+
+    def update_channel(self, channel_id, fields):
+        fields = _sqlite_flags(fields)
+        if not fields:
+            return
+        sets = ', '.join(f'{k} = ?' for k in fields)
+        with closing(self._connect()) as conn:
+            conn.execute(f'UPDATE channels SET {sets} WHERE id = ?', [*fields.values(), channel_id])
             conn.commit()
 
     def delete_channel(self, channel_id):
@@ -130,26 +193,46 @@ class SQLiteBackend:
 
     def list_users(self):
         with closing(self._connect()) as conn:
-            rows = conn.execute('SELECT username, is_admin, created_at FROM users ORDER BY created_at').fetchall()
-            return [{'username': r['username'], 'is_admin': bool(r['is_admin']), 'created_at': r['created_at']}
-                    for r in rows]
+            rows = conn.execute(
+                'SELECT username, is_admin, is_verified, is_banned, created_at FROM users ORDER BY created_at'
+            ).fetchall()
+        return [_user_out(dict(row)) for row in rows]
 
     def create_user(self, data):
-        row = {
+        row = _sqlite_flags({
             'username': data['username'],
             'password_hash': data['password_hash'],
-            'is_admin': 1 if data.get('is_admin') else 0,
+            'is_admin': bool(data.get('is_admin')),
+            'is_verified': bool(data.get('is_verified')),
+            'is_banned': bool(data.get('is_banned')),
             'created_at': now_iso(),
-        }
+        })
         cols = ', '.join(row.keys())
         marks = ', '.join('?' for _ in row)
         with closing(self._connect()) as conn:
             conn.execute(f'INSERT INTO users ({cols}) VALUES ({marks})', list(row.values()))
             conn.commit()
 
-    def set_admin(self, username, is_admin):
+    def update_user(self, username, fields):
+        fields = _sqlite_flags(fields)
+        if not fields:
+            return
+        sets = ', '.join(f'{k} = ?' for k in fields)
         with closing(self._connect()) as conn:
-            conn.execute('UPDATE users SET is_admin = ? WHERE username = ?', (1 if is_admin else 0, username))
+            conn.execute(f'UPDATE users SET {sets} WHERE username = ?', [*fields.values(), username])
+            conn.commit()
+
+    def set_admin(self, username, is_admin):
+        self.update_user(username, {'is_admin': bool(is_admin)})
+
+    def get_setting(self, key):
+        with closing(self._connect()) as conn:
+            row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+            return row['value'] if row else None
+
+    def set_setting(self, key, value):
+        with closing(self._connect()) as conn:
+            conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
             conn.commit()
 
     def liked_ids(self, username):
@@ -196,6 +279,10 @@ class SupabaseBackend:
     def insert_channel(self, row):
         self._table().insert(row).execute()
 
+    def update_channel(self, channel_id, fields):
+        if fields:
+            self._table().update(fields).eq('id', channel_id).execute()
+
     def delete_channel(self, channel_id):
         self._table('channel_likes').delete().eq('channel_id', channel_id).execute()
         self._table().delete().eq('id', channel_id).execute()
@@ -205,21 +292,33 @@ class SupabaseBackend:
         return rows[0] if rows else None
 
     def list_users(self):
-        rows = self._table('users').select('username,is_admin,created_at').execute().data or []
-        return [{'username': r['username'], 'is_admin': bool(r.get('is_admin')), 'created_at': r.get('created_at')}
-                for r in rows]
+        rows = self._table('users').select('username,is_admin,is_verified,is_banned,created_at').execute().data or []
+        return [_user_out(row) for row in rows]
 
     def create_user(self, data):
         row = {
             'username': data['username'],
             'password_hash': data['password_hash'],
             'is_admin': bool(data.get('is_admin')),
+            'is_verified': bool(data.get('is_verified')),
+            'is_banned': bool(data.get('is_banned')),
             'created_at': now_iso(),
         }
         self._table('users').insert(row).execute()
 
+    def update_user(self, username, fields):
+        if fields:
+            self._table('users').update(fields).eq('username', username).execute()
+
     def set_admin(self, username, is_admin):
-        self._table('users').update({'is_admin': bool(is_admin)}).eq('username', username).execute()
+        self.update_user(username, {'is_admin': bool(is_admin)})
+
+    def get_setting(self, key):
+        rows = self._table('settings').select('value').eq('key', key).execute().data or []
+        return rows[0]['value'] if rows else None
+
+    def set_setting(self, key, value):
+        self._table('settings').upsert({'key': key, 'value': value}).execute()
 
     def liked_ids(self, username):
         rows = self._table('channel_likes').select('channel_id').eq('username', username).execute().data or []
@@ -270,6 +369,8 @@ def build_row(data):
         'base_engagement': int(data.get('base_engagement') or 0),
         'likes': int(data.get('likes') or 0),
         'created_at': data.get('created_at') or now_iso(),
+        'is_verified': bool(data.get('is_verified')),
+        'is_pinned': bool(data.get('is_pinned')),
     }
     if data.get('owner'):
         row['owner'] = data['owner']
@@ -306,14 +407,9 @@ def get_backend():
 
 
 def _age_hours(created_at, now):
-    if not created_at:
+    created = parse_time(created_at)
+    if created is None:
         return None
-    try:
-        created = datetime.fromisoformat(str(created_at).replace('Z', '+00:00'))
-    except ValueError:
-        return None
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
     return (now - created).total_seconds() / 3600
 
 
@@ -327,8 +423,13 @@ def engagement_score(channel, now=None):
 
 
 def ranked(channels):
+    """Pinned channels come first, then everything by engagement score."""
     now = datetime.now(timezone.utc)
-    return sorted(channels, key=lambda c: engagement_score(c, now), reverse=True)
+    return sorted(
+        channels,
+        key=lambda c: (bool(c.get('is_pinned')), engagement_score(c, now)),
+        reverse=True,
+    )
 
 
 def encode_upload(upload):
@@ -378,3 +479,97 @@ def create_channel(backend, data):
     row = build_row(data)
     backend.insert_channel(row)
     return row['id']
+
+
+# ---- Maintenance mode ----
+
+def get_maintenance(backend):
+    raw = backend.get_setting('maintenance')
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        'enabled': bool(data.get('enabled')),
+        'message': data.get('message') or DEFAULT_MAINTENANCE_MESSAGE,
+    }
+
+
+def set_maintenance(backend, enabled, message):
+    message = (message or '').strip()[:MAX_MAINTENANCE] or DEFAULT_MAINTENANCE_MESSAGE
+    backend.set_setting('maintenance', json.dumps({'enabled': bool(enabled), 'message': message}))
+
+
+# ---- Announcements (stored as a JSON list in the settings table) ----
+
+def list_announcements(backend):
+    raw = backend.get_setting('announcements')
+    try:
+        items = json.loads(raw) if raw else []
+    except ValueError:
+        items = []
+    return items if isinstance(items, list) else []
+
+
+def _save_announcements(backend, items):
+    backend.set_setting('announcements', json.dumps(items))
+
+
+def announcement_status(item, now=None):
+    """'Live', 'Off' (switched off) or 'Expired'."""
+    now = now or datetime.now(timezone.utc)
+    if not item.get('active'):
+        return 'Off'
+    expires = parse_time(item.get('expires_at'))
+    if expires is None or expires <= now:
+        return 'Expired'
+    return 'Live'
+
+
+def live_announcements(backend):
+    now = datetime.now(timezone.utc)
+    return [a for a in list_announcements(backend) if announcement_status(a, now) == 'Live']
+
+
+def add_announcement(backend, message, kind, hours):
+    items = list_announcements(backend)
+    now = datetime.now(timezone.utc)
+    items.append({
+        'id': uuid.uuid4().hex[:10],
+        'message': (message or '').strip()[:MAX_ANNOUNCEMENT],
+        'kind': kind if kind in ANNOUNCEMENT_KINDS else 'Info',
+        'active': True,
+        'created_at': now.isoformat(),
+        'expires_at': (now + timedelta(hours=max(1, int(hours)))).isoformat(),
+    })
+    _save_announcements(backend, items)
+
+
+def update_announcement(backend, announcement_id, active):
+    items = list_announcements(backend)
+    for item in items:
+        if item.get('id') == announcement_id:
+            item['active'] = bool(active)
+            _save_announcements(backend, items)
+            return
+    raise ValueError('That announcement no longer exists.')
+
+
+def delete_announcement(backend, announcement_id):
+    items = [a for a in list_announcements(backend) if a.get('id') != announcement_id]
+    _save_announcements(backend, items)
+
+
+# ---- Backup ----
+
+def export_snapshot(backend):
+    """Everything an admin needs for a backup. Password hashes are never included."""
+    return {
+        'exported_at': now_iso(),
+        'channels': backend.list_channels(),
+        'users': backend.list_users(),
+        'maintenance': get_maintenance(backend),
+        'announcements': list_announcements(backend),
+    }
