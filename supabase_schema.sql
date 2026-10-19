@@ -25,6 +25,7 @@ create table if not exists users (
   username text primary key,
   password_hash text not null,
   is_admin boolean not null default false,
+  is_super_admin boolean not null default false,
   is_verified boolean not null default false,
   is_banned boolean not null default false,
   created_at timestamptz default now()
@@ -33,8 +34,13 @@ create table if not exists users (
 -- Older setups had an email column. Accounts no longer use email.
 alter table users drop column if exists email;
 alter table users add column if not exists is_admin boolean not null default false;
+alter table users add column if not exists is_super_admin boolean not null default false;
 alter table users add column if not exists is_verified boolean not null default false;
 alter table users add column if not exists is_banned boolean not null default false;
+
+-- Role levels (highest wins): storiizadmin = Main Admin Account (6), is_super_admin = Super Admin (5),
+-- is_admin = Admin (4), is_verified = Verified (3), owns a channel = Channel Owner (2), any account = Logged In (1).
+-- Only the storiizadmin account can set or remove is_super_admin. Admins cannot change Super Admins.
 
 -- One row per user per liked channel. The primary key stops double likes.
 create table if not exists channel_likes (
