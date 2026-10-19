@@ -8,6 +8,7 @@ The admin account is ensured on every backend start. Older SQLite files get new 
 import base64
 import json
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import closing
@@ -27,8 +28,10 @@ WHATSAPP_PREFIXES = ('https://whatsapp.com/channel/', 'https://www.whatsapp.com/
 MAX_CAPTION = 280
 MAX_MAINTENANCE = 300
 MAX_ANNOUNCEMENT = 200
+MAX_LINK = 300
 ANNOUNCEMENT_KINDS = ['Info', 'Warning', 'Success']
 DEFAULT_MAINTENANCE_MESSAGE = "Storiiz is under maintenance. We'll be back shortly."
+URL_PATTERN = re.compile(r'https?://[^\s<>"\']+')
 
 LIKE_WEIGHT = 3          # each like counts as 3 points of engagement
 NEW_BOOST_MAX = 20.0     # newly added channels get up to 20 extra points...
@@ -533,13 +536,62 @@ def live_announcements(backend):
     return [a for a in list_announcements(backend) if announcement_status(a, now) == 'Live']
 
 
-def add_announcement(backend, message, kind, hours):
+def find_link_in_text(text):
+    """Return the first http(s) URL found in the text, without trailing punctuation."""
+    match = URL_PATTERN.search(text or '')
+    if not match:
+        return ''
+    return match.group(0).rstrip('.,;:!?)]}')
+
+
+def clean_announcement_link(raw):
+    """Accept an https/http link or a Storiiz @handle. Returns '' when empty, raises ValueError otherwise."""
+    value = (raw or '').strip()
+    if not value:
+        return ''
+    if len(value) > MAX_LINK:
+        raise ValueError(f'Link must be {MAX_LINK} characters or fewer.')
+    if value.startswith('@'):
+        if len(value) < 2 or ' ' in value:
+            raise ValueError('A channel handle must start with @ and contain no spaces.')
+        return value
+    if value.startswith(('https://', 'http://')) and ' ' not in value:
+        return value
+    raise ValueError('The link must start with https:// or be a @channel handle.')
+
+
+def announcement_cta(backend, item):
+    """Return (url, label) for the banner button, or None if there is no link.
+
+    Priority: the link field (a URL, or a @handle looked up among channels), then a URL in the message.
+    """
+    url = ''
+    raw = (item.get('link') or '').strip()
+    if raw.startswith('@'):
+        wanted = raw.lower()
+        for channel in backend.list_channels():
+            if (channel.get('handle') or '').lower() == wanted:
+                url = channel.get('link') or ''
+                break
+    elif raw.startswith(('https://', 'http://')):
+        url = raw
+    if not url:
+        url = find_link_in_text(item.get('message'))
+    if not url.startswith(('https://', 'http://')):
+        return None
+    label = 'Join Channel →' if url.startswith(WHATSAPP_PREFIXES) else 'View Channel →'
+    return url, label
+
+
+def add_announcement(backend, message, kind, hours, link=''):
+    cleaned_link = clean_announcement_link(link)
     items = list_announcements(backend)
     now = datetime.now(timezone.utc)
     items.append({
         'id': uuid.uuid4().hex[:10],
         'message': (message or '').strip()[:MAX_ANNOUNCEMENT],
         'kind': kind if kind in ANNOUNCEMENT_KINDS else 'Info',
+        'link': cleaned_link,
         'active': True,
         'created_at': now.isoformat(),
         'expires_at': (now + timedelta(hours=max(1, int(hours)))).isoformat(),
