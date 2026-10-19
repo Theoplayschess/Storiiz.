@@ -1,4 +1,13 @@
-"""Accounts for Storiiz: username and password only, PBKDF2-SHA256 hashing, roles and moderation.
+"""Accounts and permissions for Storiiz: username and password only, PBKDF2-SHA256 hashing, roles.
+
+Role levels, lowest to highest:
+  0 Unregistered       visitor: browse the feed only
+  1 Logged In          can like and submit channels
+  2 Channel Owner      has submitted at least one channel
+  3 Verified           verified account (is_verified)
+  4 Admin              moderation: channels, pinning, bans and verification of lower-level accounts
+  5 Super Admin        all admin powers, admin role changes, maintenance mode and announcements
+  6 Main Admin Account storiizadmin: cannot be changed by anyone; only one who appoints Super Admins
 
 Passwords are never stored in plain text. Each hash has its own random salt and the format is
 pbkdf2_sha256$iterations$salt_hex$hash_hex.
@@ -21,6 +30,27 @@ MAX_USERNAME = 30
 ADMIN_USERNAME = 'storiizadmin'
 DEFAULT_ADMIN_PASSWORD = 'StorizzAdmin2026!?'
 ADMIN_PASSWORD_ENV = 'STORIIZ_ADMIN_PASSWORD'
+
+LEVEL_GUEST = 0
+LEVEL_USER = 1
+LEVEL_OWNER = 2
+LEVEL_VERIFIED = 3
+LEVEL_ADMIN = 4
+LEVEL_SUPER_ADMIN = 5
+LEVEL_MAIN_ADMIN = 6
+
+LEVEL_NAMES = {
+    LEVEL_GUEST: 'Unregistered',
+    LEVEL_USER: 'Logged In',
+    LEVEL_OWNER: 'Channel Owner',
+    LEVEL_VERIFIED: 'Verified',
+    LEVEL_ADMIN: 'Admin',
+    LEVEL_SUPER_ADMIN: 'Super Admin',
+    LEVEL_MAIN_ADMIN: 'Main Admin Account',
+}
+
+MODERATE_MESSAGE = ('You can only moderate accounts below your own level. '
+                    'The Main Admin Account cannot be changed.')
 
 
 def hash_password(password):
@@ -46,9 +76,87 @@ def normalize_username(username):
     return (username or '').strip().lower()
 
 
-def is_admin(user):
-    return bool(user and user.get('is_admin'))
+# ---- Levels ----
 
+def is_main_admin(user):
+    return bool(user) and normalize_username(user.get('username')) == ADMIN_USERNAME
+
+
+def same_user(a, b):
+    return bool(a) and bool(b) and normalize_username(a.get('username')) == normalize_username(b.get('username'))
+
+
+def level_of(user, owns_channel=False):
+    """The highest level the account has. owns_channel is True when the account has submitted a channel."""
+    if not user:
+        return LEVEL_GUEST
+    if is_main_admin(user):
+        return LEVEL_MAIN_ADMIN
+    if user.get('is_super_admin'):
+        return LEVEL_SUPER_ADMIN
+    if user.get('is_admin'):
+        return LEVEL_ADMIN
+    if user.get('is_verified'):
+        return LEVEL_VERIFIED
+    if owns_channel:
+        return LEVEL_OWNER
+    return LEVEL_USER
+
+
+def level_name(level):
+    return LEVEL_NAMES.get(level, LEVEL_NAMES[LEVEL_GUEST])
+
+
+def is_admin(user):
+    return level_of(user) >= LEVEL_ADMIN
+
+
+def is_super_admin(user):
+    return level_of(user) >= LEVEL_SUPER_ADMIN
+
+
+# ---- Permission checks. Used by the UI to show buttons and by the actions below to enforce them. ----
+
+def can_moderate_channels(actor):
+    """Remove, verify and pin channels."""
+    return is_admin(actor)
+
+
+def can_manage_site(actor):
+    """Maintenance mode and announcements."""
+    return is_super_admin(actor)
+
+
+def can_moderate_user(actor, target):
+    """Ban, unban and verify accounts. Only accounts strictly below the actor's level, never the main account or oneself."""
+    if target is None or not is_admin(actor) or same_user(actor, target) or is_main_admin(target):
+        return False
+    return level_of(actor) > level_of(target)
+
+
+def can_change_admin_role(actor, target):
+    """Make or remove a standard Admin. Super Admins and the main account can be changed only by the main account."""
+    if target is None or not is_super_admin(actor) or same_user(actor, target) or is_main_admin(target):
+        return False
+    return not is_super_admin(target) or is_main_admin(actor)
+
+
+def can_set_super_admin(actor, target):
+    """Only the main account appoints or removes Super Admins."""
+    return is_main_admin(actor) and target is not None and not is_main_admin(target)
+
+
+def can_reset_password(actor, target):
+    if target is None:
+        return False
+    if is_main_admin(target):
+        return is_main_admin(actor)
+    if same_user(actor, target):
+        return is_admin(actor)
+    return can_moderate_user(actor, target)
+
+
+# ---- Accounts ----
 
 def _username_ok(username):
     return (
@@ -87,6 +195,7 @@ def sign_up(backend, username, password):
         'username': name,
         'password_hash': hash_password(password),
         'is_admin': False,
+        'is_super_admin': False,
     })
     return name
 
@@ -102,6 +211,7 @@ def log_in(backend, username, password):
     return {
         'username': user['username'],
         'is_admin': bool(user.get('is_admin')),
+        'is_super_admin': bool(user.get('is_super_admin')),
         'is_verified': bool(user.get('is_verified')),
     }, None
 
@@ -117,68 +227,87 @@ def admin_password():
 
 
 def ensure_admin(backend):
-    """Create the admin account if missing, and make sure it has the admin flag."""
+    """Create the main account if missing and keep its flags correct: admin, not super, not banned."""
     user = backend.get_user(ADMIN_USERNAME)
     if user is None:
         backend.create_user({
             'username': ADMIN_USERNAME,
             'password_hash': hash_password(admin_password()),
             'is_admin': True,
+            'is_super_admin': False,
         })
-    elif not user.get('is_admin'):
-        backend.update_user(ADMIN_USERNAME, {'is_admin': True})
+        return
+    fixes = {}
+    if not user.get('is_admin'):
+        fixes['is_admin'] = True
+    if user.get('is_super_admin'):
+        fixes['is_super_admin'] = False
+    if user.get('is_banned'):
+        fixes['is_banned'] = False
+    if fixes:
+        backend.update_user(ADMIN_USERNAME, fixes)
 
 
 # ---- Moderation actions. The actor is the logged-in user performing the action. ----
 
-def _require_admin(actor):
-    if not is_admin(actor):
-        raise PermissionError('Admin rights are required for that.')
-
-
-def _target(backend, username):
+def _load_target(backend, username):
     name = normalize_username(username)
-    user = backend.get_user(name)
+    user = backend.get_user(name) if name else None
     if user is None:
         raise ValueError('That user does not exist.')
     return name, user
 
 
 def set_admin_role(backend, actor, username, make_admin):
-    """Promote or demote a user. storiizadmin cannot be demoted and no one can demote themselves."""
-    _require_admin(actor)
-    name, _ = _target(backend, username)
-    if not make_admin:
-        if name == ADMIN_USERNAME:
-            raise ValueError('The storiizadmin account cannot be demoted.')
-        if name == actor['username']:
-            raise ValueError('You cannot demote your own account.')
-    backend.update_user(name, {'is_admin': bool(make_admin)})
+    """Make or remove a standard Admin. Only Super Admins and the main account can do this."""
+    name, target = _load_target(backend, username)
+    if is_main_admin(target):
+        raise PermissionError('The Main Admin Account cannot be changed.')
+    if same_user(actor, target):
+        raise PermissionError('You cannot change your own role.')
+    if not is_super_admin(actor):
+        raise PermissionError('Only Super Admins and the Main Admin Account can change admin roles.')
+    if not can_change_admin_role(actor, target):
+        raise PermissionError('Only the Main Admin Account can change a Super Admin.')
+    if make_admin:
+        backend.update_user(name, {'is_admin': True})
+    else:
+        backend.update_user(name, {'is_admin': False, 'is_super_admin': False})
+
+
+def set_super_admin(backend, actor, username, make_super):
+    """Appoint or remove a Super Admin. Only the main account can do this.
+
+    Removing Super Admin status leaves the account as a standard Admin.
+    """
+    name, target = _load_target(backend, username)
+    if not can_set_super_admin(actor, target):
+        raise PermissionError('Only the Main Admin Account can appoint or remove Super Admins.')
+    if make_super:
+        backend.update_user(name, {'is_super_admin': True, 'is_admin': True})
+    else:
+        backend.update_user(name, {'is_super_admin': False})
 
 
 def set_verified(backend, actor, username, verified):
-    _require_admin(actor)
-    name, _ = _target(backend, username)
+    name, target = _load_target(backend, username)
+    if not can_moderate_user(actor, target):
+        raise PermissionError(MODERATE_MESSAGE)
     backend.update_user(name, {'is_verified': bool(verified)})
 
 
 def set_banned(backend, actor, username, banned):
-    """Freeze or unfreeze an account. Admins cannot be banned, and nobody can ban themselves."""
-    _require_admin(actor)
-    name, user = _target(backend, username)
-    if banned:
-        if name == actor['username']:
-            raise ValueError('You cannot ban your own account.')
-        if user.get('is_admin'):
-            raise ValueError('Demote this admin before banning the account.')
+    """Freeze or unfreeze an account. Only accounts below the actor's level can be changed."""
+    name, target = _load_target(backend, username)
+    if not can_moderate_user(actor, target):
+        raise PermissionError(MODERATE_MESSAGE)
     backend.update_user(name, {'is_banned': bool(banned)})
 
 
 def reset_password(backend, actor, username, new_password):
-    _require_admin(actor)
-    name, _ = _target(backend, username)
-    if name == ADMIN_USERNAME and actor['username'] != ADMIN_USERNAME:
-        raise ValueError('Only storiizadmin can reset its own password.')
+    name, target = _load_target(backend, username)
+    if not can_reset_password(actor, target):
+        raise PermissionError('You do not have permission to reset this password.')
     errors = _password_errors(new_password)
     if errors:
         raise ValueError(errors[0])
