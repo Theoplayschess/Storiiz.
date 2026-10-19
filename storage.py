@@ -27,9 +27,6 @@ LIKE_WEIGHT = 3          # each like counts as 3 points of engagement
 NEW_BOOST_MAX = 20.0     # newly added channels get up to 20 extra points...
 NEW_BOOST_HOURS = 48.0   # ...decaying linearly to zero over 48 hours
 
-COLUMNS = ['id', 'handle', 'name', 'category', 'avatar', 'image', 'caption', 'link',
-           'tags', 'base_engagement', 'likes', 'created_at']
-
 CREATE_SQLITE_TABLE = '''
 CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
@@ -43,9 +40,32 @@ CREATE TABLE IF NOT EXISTS channels (
     tags TEXT DEFAULT '',
     base_engagement INTEGER DEFAULT 0,
     likes INTEGER DEFAULT 0,
+    created_at TEXT,
+    owner TEXT
+)
+'''
+
+CREATE_USERS_TABLE = '''
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    email TEXT,
+    password_hash TEXT NOT NULL,
     created_at TEXT
 )
 '''
+
+CREATE_LIKES_TABLE = '''
+CREATE TABLE IF NOT EXISTS channel_likes (
+    username TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    created_at TEXT,
+    PRIMARY KEY (username, channel_id)
+)
+'''
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _secret(name):
@@ -67,6 +87,12 @@ class SQLiteBackend:
         self.note = ''
         with closing(self._connect()) as conn:
             conn.execute(CREATE_SQLITE_TABLE)
+            conn.execute(CREATE_USERS_TABLE)
+            conn.execute(CREATE_LIKES_TABLE)
+            # Databases created before accounts existed need the owner column added.
+            columns = {row['name'] for row in conn.execute('PRAGMA table_info(channels)')}
+            if 'owner' not in columns:
+                conn.execute('ALTER TABLE channels ADD COLUMN owner TEXT')
             conn.commit()
 
     def _connect(self):
@@ -85,9 +111,43 @@ class SQLiteBackend:
             conn.execute(f'INSERT INTO channels ({cols}) VALUES ({marks})', list(row.values()))
             conn.commit()
 
-    def add_like(self, channel_id, delta):
+    def get_user(self, username):
         with closing(self._connect()) as conn:
-            conn.execute('UPDATE channels SET likes = MAX(0, likes + ?) WHERE id = ?', (delta, channel_id))
+            row = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+            return dict(row) if row else None
+
+    def create_user(self, data):
+        row = {**data, 'created_at': now_iso()}
+        cols = ', '.join(row.keys())
+        marks = ', '.join('?' for _ in row)
+        with closing(self._connect()) as conn:
+            conn.execute(f'INSERT INTO users ({cols}) VALUES ({marks})', list(row.values()))
+            conn.commit()
+
+    def liked_ids(self, username):
+        with closing(self._connect()) as conn:
+            rows = conn.execute('SELECT channel_id FROM channel_likes WHERE username = ?', (username,))
+            return {row['channel_id'] for row in rows.fetchall()}
+
+    def set_like(self, username, channel_id, liked):
+        """Like or unlike a channel for one user. Each user can like a channel only once."""
+        with closing(self._connect()) as conn:
+            exists = conn.execute(
+                'SELECT 1 FROM channel_likes WHERE username = ? AND channel_id = ?',
+                (username, channel_id),
+            ).fetchone() is not None
+            if liked and not exists:
+                conn.execute(
+                    'INSERT INTO channel_likes (username, channel_id, created_at) VALUES (?, ?, ?)',
+                    (username, channel_id, now_iso()),
+                )
+                conn.execute('UPDATE channels SET likes = likes + 1 WHERE id = ?', (channel_id,))
+            elif not liked and exists:
+                conn.execute(
+                    'DELETE FROM channel_likes WHERE username = ? AND channel_id = ?',
+                    (username, channel_id),
+                )
+                conn.execute('UPDATE channels SET likes = MAX(0, likes - 1) WHERE id = ?', (channel_id,))
             conn.commit()
 
 
@@ -99,8 +159,8 @@ class SupabaseBackend:
         self.client = create_client(url, key)
         self.note = ''
 
-    def _table(self):
-        return self.client.table('channels')
+    def _table(self, name='channels'):
+        return self.client.table(name)
 
     def list_channels(self):
         return self._table().select('*').execute().data or []
@@ -108,12 +168,32 @@ class SupabaseBackend:
     def insert_channel(self, row):
         self._table().insert(row).execute()
 
-    def add_like(self, channel_id, delta):
-        rows = self._table().select('likes').eq('id', channel_id).execute().data or []
-        if not rows:
+    def get_user(self, username):
+        rows = self._table('users').select('*').eq('username', username).execute().data or []
+        return rows[0] if rows else None
+
+    def create_user(self, data):
+        self._table('users').insert({**data, 'created_at': now_iso()}).execute()
+
+    def liked_ids(self, username):
+        rows = self._table('channel_likes').select('channel_id').eq('username', username).execute().data or []
+        return {row['channel_id'] for row in rows}
+
+    def set_like(self, username, channel_id, liked):
+        existing = (self._table('channel_likes').select('channel_id')
+                    .eq('username', username).eq('channel_id', channel_id).execute().data or [])
+        channel = self._table().select('likes').eq('id', channel_id).execute().data or []
+        if not channel:
             return
-        new_likes = max(0, (rows[0].get('likes') or 0) + delta)
-        self._table().update({'likes': new_likes}).eq('id', channel_id).execute()
+        current = channel[0].get('likes') or 0
+        if liked and not existing:
+            self._table('channel_likes').insert(
+                {'username': username, 'channel_id': channel_id, 'created_at': now_iso()}
+            ).execute()
+            self._table().update({'likes': current + 1}).eq('id', channel_id).execute()
+        elif not liked and existing:
+            self._table('channel_likes').delete().eq('username', username).eq('channel_id', channel_id).execute()
+            self._table().update({'likes': max(0, current - 1)}).eq('id', channel_id).execute()
 
 
 def parse_tags(value):
@@ -131,7 +211,7 @@ def parse_tags(value):
 def build_row(data):
     handle = data['handle']
     slug = ''.join(ch if ch.isalnum() else '_' for ch in handle.lower().lstrip('@'))
-    return {
+    row = {
         'id': data.get('id') or f'{slug}_{uuid.uuid4().hex[:6]}',
         'handle': handle,
         'name': data.get('name') or handle,
@@ -143,8 +223,11 @@ def build_row(data):
         'tags': ','.join(parse_tags(data.get('tags'))),
         'base_engagement': int(data.get('base_engagement') or 0),
         'likes': int(data.get('likes') or 0),
-        'created_at': data.get('created_at') or datetime.now(timezone.utc).isoformat(),
+        'created_at': data.get('created_at') or now_iso(),
     }
+    if data.get('owner'):
+        row['owner'] = data['owner']
+    return row
 
 
 def seed_if_empty(backend):
