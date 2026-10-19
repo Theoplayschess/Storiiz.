@@ -2,6 +2,7 @@
 
 Uses Supabase when SUPABASE_URL and SUPABASE_KEY are set (st.secrets or environment variables).
 Otherwise uses a local SQLite database that is created automatically in data/storiiz.db.
+The admin account is ensured on every backend start.
 """
 
 import base64
@@ -12,6 +13,8 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+
+import auth
 
 BASE_DIR = Path(__file__).parent
 SQLITE_PATH = BASE_DIR / 'data' / 'storiiz.db'
@@ -48,8 +51,8 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE_USERS_TABLE = '''
 CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
-    email TEXT,
     password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT
 )
 '''
@@ -89,10 +92,13 @@ class SQLiteBackend:
             conn.execute(CREATE_SQLITE_TABLE)
             conn.execute(CREATE_USERS_TABLE)
             conn.execute(CREATE_LIKES_TABLE)
-            # Databases created before accounts existed need the owner column added.
-            columns = {row['name'] for row in conn.execute('PRAGMA table_info(channels)')}
-            if 'owner' not in columns:
+            # Migrate older databases: add the owner column and the is_admin flag if missing.
+            channel_cols = {row['name'] for row in conn.execute('PRAGMA table_info(channels)')}
+            if 'owner' not in channel_cols:
                 conn.execute('ALTER TABLE channels ADD COLUMN owner TEXT')
+            user_cols = {row['name'] for row in conn.execute('PRAGMA table_info(users)')}
+            if 'is_admin' not in user_cols:
+                conn.execute('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0')
             conn.commit()
 
     def _connect(self):
@@ -117,11 +123,21 @@ class SQLiteBackend:
             return dict(row) if row else None
 
     def create_user(self, data):
-        row = {**data, 'created_at': now_iso()}
+        row = {
+            'username': data['username'],
+            'password_hash': data['password_hash'],
+            'is_admin': 1 if data.get('is_admin') else 0,
+            'created_at': now_iso(),
+        }
         cols = ', '.join(row.keys())
         marks = ', '.join('?' for _ in row)
         with closing(self._connect()) as conn:
             conn.execute(f'INSERT INTO users ({cols}) VALUES ({marks})', list(row.values()))
+            conn.commit()
+
+    def set_admin(self, username, is_admin):
+        with closing(self._connect()) as conn:
+            conn.execute('UPDATE users SET is_admin = ? WHERE username = ?', (1 if is_admin else 0, username))
             conn.commit()
 
     def liked_ids(self, username):
@@ -173,7 +189,16 @@ class SupabaseBackend:
         return rows[0] if rows else None
 
     def create_user(self, data):
-        self._table('users').insert({**data, 'created_at': now_iso()}).execute()
+        row = {
+            'username': data['username'],
+            'password_hash': data['password_hash'],
+            'is_admin': bool(data.get('is_admin')),
+            'created_at': now_iso(),
+        }
+        self._table('users').insert(row).execute()
+
+    def set_admin(self, username, is_admin):
+        self._table('users').update({'is_admin': bool(is_admin)}).eq('username', username).execute()
 
     def liked_ids(self, username):
         rows = self._table('channel_likes').select('channel_id').eq('username', username).execute().data or []
@@ -242,19 +267,20 @@ def seed_if_empty(backend):
 def get_backend():
     url = _secret('SUPABASE_URL')
     key = _secret('SUPABASE_KEY')
+    backend = None
     if url and key:
         try:
             backend = SupabaseBackend(url, key)
             backend.list_channels()  # verifies connection and table
-            return backend
         except Exception as exc:
-            fallback = SQLiteBackend()
-            fallback.note = (f'Supabase is configured but unavailable ({type(exc).__name__}). '
-                             'Using local SQLite instead. Check the setup steps in the README.')
-            seed_if_empty(fallback)
-            return fallback
-    backend = SQLiteBackend()
-    seed_if_empty(backend)
+            backend = SQLiteBackend()
+            backend.note = (f'Supabase is configured but unavailable ({type(exc).__name__}). '
+                            'Using local SQLite instead. Check the setup steps in the README.')
+            seed_if_empty(backend)
+    else:
+        backend = SQLiteBackend()
+        seed_if_empty(backend)
+    auth.ensure_admin(backend)
     return backend
 
 
