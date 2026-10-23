@@ -4,7 +4,10 @@ import json
 import streamlit as st
 
 import auth
+import composer
 import custom_roles
+import dock
+import feed_posts
 import i18n
 import role_ui
 import storage
@@ -22,14 +25,6 @@ PAGE_BG = '#0B0F0C'
 SURFACE = '#121813'
 LINE = '#1E2820'
 VERIFIED_BLUE = '#4DA3F5'
-
-# Dock items: view key, icon shown on the button, tooltip text (French label).
-DOCK_ITEMS = [
-    ('video', '🎬', 'Vidéo'),
-    ('photo', '📷', 'Photo'),
-    ('post', '➕', 'Poster'),
-    ('settings', '⚙️', 'Paramètres'),
-]
 
 # Level -> (CSS class, translation key) for the role badge.
 LEVEL_BADGES = {
@@ -126,19 +121,6 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 
 h2, h3 {{ font-weight: 600 !important; letter-spacing: -0.01em; }}
 
-/* Bottom dock: the row that contains the marker becomes a fixed bar at the bottom of the screen */
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) {{ position: fixed; bottom: 0; left: 0; right: 0; max-width: 680px;
-  margin: 0 auto; z-index: 999; background: rgba(11,15,12,0.94); backdrop-filter: blur(12px);
-  border-top: 1px solid {LINE}; padding: 0.4rem 0.6rem calc(0.4rem + env(safe-area-inset-bottom)) 0.6rem;
-  gap: 0.4rem; flex-wrap: nowrap !important; }}
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) > div {{ min-width: 0 !important; flex: 1 1 0 !important;
-  width: auto !important; }}
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton {{ display: flex; justify-content: center; }}
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button {{ min-height: 3rem; width: 100%;
-  font-size: 1.35rem !important; line-height: 1 !important; padding: 0 !important; }}
-div[data-testid="stHorizontalBlock"]:has(.dock-marker) .stButton button[kind="primary"] {{ background: {GREEN} !important;
-  color: #05130A !important; border-color: {GREEN} !important; }}
-.dock-marker {{ display: none; }}
 </style>
 '''
 
@@ -197,10 +179,6 @@ def init_state():
     st.session_state.setdefault('visible', PAGE_STEP)
     st.session_state.setdefault('dismissed', set())
     st.session_state.setdefault('view', 'video')
-
-
-def set_view(name):
-    st.session_state.view = name
 
 
 def notify(kind, text):
@@ -313,18 +291,6 @@ def account_bar(backend):
 
 # ---------- feed ----------
 
-def toggle_like(backend, channel_id):
-    user = current_user()
-    if not user:
-        return
-    liked = channel_id not in st.session_state.liked_ids
-    backend.set_like(user['username'], channel_id, liked)
-    if liked:
-        st.session_state.liked_ids.add(channel_id)
-    else:
-        st.session_state.liked_ids.discard(channel_id)
-
-
 def remove_channel(backend, channel_id):
     if not is_admin_user():
         return
@@ -343,70 +309,6 @@ def set_channel_flag(backend, channel_id, field, value):
 def image_src(value):
     source = storage.media_source(value)
     return source if isinstance(source, str) else ''
-
-
-def render_card(backend, channel, role_lookup=None):
-    user = current_user()
-    can_moderate = is_admin_user()
-    handle = html.escape(channel['handle'])
-    title = html.escape(channel.get('name') or channel['handle'])
-    desc = html.escape(channel.get('caption') or '')
-    category = html.escape(category_label(channel.get('category')))
-    owner = channel.get('owner')
-    owner_roles = (role_lookup or {}).get(owner, []) if owner else []
-    role_html = role_ui.badges_html(owner_roles)
-    owner_html = f"<div class='owner'>{html.escape(t('card.submitted_by', name=owner))}</div>" if owner else ''
-    verified = f"<span class='verified'>{html.escape(t('card.verified'))}</span>" if channel.get('is_verified') else ''
-    pinned = f"<span class='pinned'>{html.escape(t('card.pinned'))}</span>" if channel.get('is_pinned') else ''
-    avatar_src = html.escape(image_src(channel.get('avatar') or channel.get('image')))
-    media_src = html.escape(image_src(channel.get('image')))
-    likes = channel.get('likes') or 0
-    tags = storage.parse_tags(channel.get('tags'))
-    tags_html = f"<div class='hashtags'>{' '.join('#' + html.escape(t) for t in tags)}</div>" if tags else ''
-
-    st.markdown(f"""
-<div class='card'>
-  <div class='card-head'>
-    <img class='avatar' src='{avatar_src}' alt=''/>
-    <div>
-      <span class='handle'>{handle}</span>{verified}{pinned}{role_html}<span class='tag'>{category}</span>
-    </div>
-    <div class='likes-badge'>{likes}</div>
-  </div>
-  {owner_html}
-  <img class='media' src='{media_src}' alt='{title}'/>
-  <div class='title'>{title}</div>
-  <div class='desc'>{desc}</div>
-  {tags_html}
-</div>
-""", unsafe_allow_html=True)
-
-    channel_id = channel['id']
-    liked = channel_id in st.session_state.liked_ids
-    cols = st.columns([1, 2, 1]) if can_moderate else st.columns([1, 2])
-    with cols[0]:
-        if user:
-            st.button(
-                t('card.liked') if liked else t('card.like'),
-                key=f'like_{channel_id}',
-                on_click=toggle_like,
-                args=(backend, channel_id),
-                use_container_width=True,
-            )
-        else:
-            st.button(t('card.login_to_like'), key=f'like_{channel_id}', disabled=True, use_container_width=True)
-    with cols[1]:
-        st.link_button(t('card.join'), channel['link'], use_container_width=True)
-    if can_moderate:
-        with cols[2]:
-            st.button(
-                t('card.remove'),
-                key=f'remove_{channel_id}',
-                on_click=remove_channel,
-                args=(backend, channel_id),
-                use_container_width=True,
-            )
-    st.write('')
 
 
 def matches(channel, query):
@@ -884,25 +786,6 @@ def announcement_banners(backend):
                 st.rerun()
 
 
-def bottom_dock():
-    """Fixed bottom navigation with icon buttons. The active item is shown as a primary button."""
-    cols = st.columns(len(DOCK_ITEMS))
-    for col, (name, icon, label) in zip(cols, DOCK_ITEMS):
-        with col:
-            if name == 'video':
-                st.markdown("<span class='dock-marker'></span>", unsafe_allow_html=True)
-            active = st.session_state.view == name
-            st.button(
-                icon,
-                key=f'nav_{name}',
-                help=label,
-                on_click=set_view,
-                args=(name,),
-                type='primary' if active else 'secondary',
-                use_container_width=True,
-            )
-
-
 def settings_view(backend):
     st.subheader(t('auth.title'))
     account_bar(backend)
@@ -917,6 +800,7 @@ def main():
     init_state()
     st.markdown(CSS, unsafe_allow_html=True)
     role_ui.inject_css()
+    dock.inject_css()
     backend = get_backend()
     refresh_user(backend)
 
@@ -941,12 +825,18 @@ def main():
         photo_view(backend)
     elif view == 'post':
         submit_view(backend)
+        user = current_user()
+        owned = [c for c in backend.list_channels() if user and c.get('owner') == user['username']]
+        composer.render(backend, user, owned, current_level())
     elif view == 'settings':
         settings_view(backend)
     else:
         video_view(backend)
 
-    bottom_dock()
+    if view in ('video', 'photo'):
+        feed_posts.render(backend, ranked_queue(backend, ''), current_user(), is_admin_user())
+
+    dock.render()
 
 
 main()
